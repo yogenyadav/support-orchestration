@@ -1,0 +1,417 @@
+# Lifecycle-to-domain map: TOTE entity
+# Version: 0.1-DRAFT
+#
+# WARNING — EVERYTHING MARKED [INFERRED] IS NOT GROUNDED IN REAL CODE OR SCHEMA.
+# The tote lifecycle is LESS EXPLICITLY DOCUMENTED than order — this draft requires
+# more correction than the order map. Tote state names especially need verification.
+#
+# Format: same schema as order.yaml.
+# Blocker class definitions live in order.yaml (shared taxonomy).
+# Cross-reference: tote advances alongside its parent order. The maps interlock —
+# an order's stuck transition often implies a tote stuck in a parallel state.
+
+entity: tote
+schema_version: "0.1-draft"
+
+# ─── RELATIONSHIP TO ORDER ───────────────────────────────────────────────────
+relationship_to_order:
+  cardinality: "1 order → 1 tote (typically, though consolidation from multiple bins is possible)"
+  coupling: >
+    Tote and order lifecycles run in parallel from 'released'/'open_for_picking'
+    through to 'shipped'/'dispatched'. A stuck tote typically manifests as a stuck
+    order, but the root cause is often in the tote's physical routing.
+  grounding: "[INFERRED]"
+
+
+# ─── STATES ──────────────────────────────────────────────────────────────────
+states:
+  created:
+    description: "Tote record allocated in the system for an order"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  open_for_picking:
+    description: "Tote opened and assigned to a pick station; awaiting operator"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  picking_in_progress:
+    description: "Operator actively picking items into the tote"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  picking_complete:
+    description: "All required items picked; IMS cycle count passed; tote closed"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  on_conveyor:
+    description: "Tote placed on takeaway conveyor by operator; WCS tracking it"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  at_sorter:
+    description: "Tote at the sortation/divert point; WCS determining chute assignment"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  at_packing:
+    description: "Tote at packing station; awaiting or undergoing packing"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  packed:
+    description: "Contents packed into shipping container; packing station records completion"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  labeled:
+    description: "Shipping label printed and applied to the package"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  dispatched:
+    description: "Package on outbound conveyor / loaded on truck — terminal success"
+    terminal: true
+    grounding: "[INFERRED]"
+
+  abandoned:
+    description: "Tote abandoned (contents returned, order cancelled, or operator intervention)"
+    terminal: true
+    grounding: "[INFERRED]"
+
+
+# ─── TRANSITIONS ─────────────────────────────────────────────────────────────
+transitions:
+
+  - id: tote_created_to_open
+    from: created
+    to: open_for_picking
+    owning_domain: GTP_PICKING
+    trigger: >
+      GTP Picking engine opens a tote and assigns it to a pick station for a specific
+      order, in response to the order being released by WES.
+    trigger_transport: n/a  # internal picking engine state change
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: capacity
+        detail: "No physical totes available at the station (shortage of physical containers)"
+        grounding: "[INFERRED]"
+      - class: service_down
+        detail: "Picking engine cannot allocate a tote record (DB write failure)"
+        grounding: "[INFERRED]"
+    dependency_edges:
+      - entity: order
+        state_required: released
+        description: "Order must be released by WES before a tote is opened for it"
+        grounding: "[INFERRED]"
+    grounding: "[INFERRED]"
+    diagnostic_note: ""
+
+  - id: tote_open_to_picking
+    from: open_for_picking
+    to: picking_in_progress
+    owning_domain: GTP_PICKING
+    trigger: >
+      Operator arrives at pick station, scans tote barcode, and begins picking items
+      from the delivered bin into the tote.
+    trigger_transport: n/a  # operator action at station terminal
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: human_delay
+        detail: "Operator hasn't arrived at or started at pick station"
+        grounding: "[INFERRED]"
+      - class: identification_failure
+        detail: "Tote barcode scan failed at pick station terminal"
+        grounding: "[INFERRED]"
+      - class: bin_unavailable
+        detail: "Bin has not arrived at pick port yet; operator is waiting for storage retrieval"
+        grounding: "[INFERRED]"
+    dependency_edges:
+      - entity: bin
+        state_required: at_port
+        description: "Bin must be physically at the pick port for the operator to pick from"
+        grounding: "[INFERRED]"
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      If the order is 'released' → 'picking' but the tote is stuck in 'open_for_picking',
+      the bin has likely not arrived yet (storage issue) or the operator hasn't started.
+
+  - id: tote_picking_to_complete
+    from: picking_in_progress
+    to: picking_complete
+    owning_domain: GTP_PICKING
+    trigger: >
+      Operator picks all required items from bin into tote; confirms complete at station
+      terminal; picking engine records completion; IMS cycle count runs and passes;
+      tote is closed.
+    trigger_transport: n/a  # operator confirmation at station terminal
+    ims_check_first: true   # IMS HALT IS COMMON HERE
+    ims_halt_possible: true
+    ims_halt_note: >
+      IMS cycle count runs at pick completion. A discrepancy DELIBERATELY halts the
+      tote here — check IMS state before assuming picking engine bug. See §1.4.
+    candidate_blockers:
+      - class: ims_hold
+        detail: "IMS cycle count discrepancy — deliberate halt awaiting count correction"
+        grounding: "[INFERRED from §1.4 — CHECK THIS FIRST]"
+        check_order: 1
+      - class: human_delay
+        detail: "Operator has not finished picking all items"
+        grounding: "[INFERRED]"
+        check_order: 2
+      - class: inventory_mismatch
+        detail: "Wrong item or empty bin — operator cannot complete pick as instructed"
+        grounding: "[INFERRED]"
+        check_order: 3
+      - class: service_down
+        detail: "Picking engine failed to record completion event"
+        grounding: "[INFERRED]"
+        check_order: 4
+    dependency_edges:
+      - entity: order
+        state_required: picking
+        description: "Parent order must be in 'picking' state"
+        grounding: "[INFERRED]"
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      This is the most common IMS halt point for totes. A stuck tote here with a
+      corresponding stuck order in 'picking' is almost certainly an IMS hold or
+      a bin contents issue — not a software fault.
+
+  - id: tote_complete_to_conveyor
+    from: picking_complete
+    to: on_conveyor
+    owning_domain: WCS
+    trigger: >
+      WES sends 'tote onto takeaway' instruction to WCS (TCP socket). WCS accepts
+      the tote onto the takeaway conveyor. Operator may also physically place the
+      tote on the conveyor after closing it.
+    trigger_transport: TCP_socket
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: socket_failure
+        detail: "WES→WCS TCP socket dropped; WCS didn't receive the takeaway instruction"
+        grounding: "[INFERRED from §1.3]"
+        check_order: 1
+      - class: lost_ack
+        detail: "WCS placed tote on conveyor but ack to WES was lost"
+        grounding: "[INFERRED from §1.3]"
+        check_order: 2
+      - class: human_delay
+        detail: "Operator hasn't physically placed the tote on the conveyor yet"
+        grounding: "[INFERRED]"
+        check_order: 3
+      - class: hardware_fault
+        detail: "Takeaway conveyor stopped or in E-stop state"
+        grounding: "[INFERRED]"
+        check_order: 4
+    dependency_edges:
+      - entity: order
+        state_required: picked
+        description: "Parent order must reach 'picked' before tote moves to conveyor"
+        grounding: "[INFERRED]"
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      WES↔WCS is always TCP socket. If the socket is healthy and WCS received the
+      instruction, check whether the ack was lost vs. WCS not responding.
+
+  - id: tote_conveyor_to_sorter
+    from: on_conveyor
+    to: at_sorter
+    owning_domain: WCS
+    trigger: >
+      WCS tracks tote along takeaway conveyor via barcode readers; routes it to
+      the sortation/divert point.
+    trigger_transport: TCP_socket
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: hardware_fault
+        detail: "Conveyor stopped, E-stop active, or jam between takeaway and sorter"
+        grounding: "[INFERRED]"
+        check_order: 1
+      - class: identification_failure
+        detail: "Tote barcode not read on conveyor — WCS lost tracking of tote"
+        grounding: "[INFERRED]"
+        check_order: 2
+      - class: socket_failure
+        detail: "WCS lost connection to conveyor controller"
+        grounding: "[INFERRED]"
+        check_order: 3
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      A tote 'lost' on the conveyor (no scan read) is a common physical issue.
+      Check WCS tracking logs for the last known scan point to locate it.
+
+  - id: tote_sorter_to_packing
+    from: at_sorter
+    to: at_packing
+    owning_domain: WCS
+    trigger: >
+      WES sends 'divert to chute' instruction to WCS; WCS fires the diverter
+      hardware; tote arrives at correct chute and is routed to packing station.
+    trigger_transport: TCP_socket
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: hardware_fault
+        detail: >
+          Diverter hardware failure (actuator, sensor, mechanical jam).
+          Physical fault → field engineer.
+          Check WCS logs for E-stop or actuator fault codes.
+        grounding: "[INFERRED]"
+        check_order: 1
+      - class: routing_error
+        detail: "WCS assigned wrong chute — tote diverted to incorrect packing station"
+        grounding: "[INFERRED]"
+        check_order: 2
+      - class: capacity
+        detail: "Target chute is full; tote queued waiting for chute to drain"
+        grounding: "[INFERRED]"
+        check_order: 3
+      - class: socket_failure
+        detail: "WCS lost TCP connection to diverter controller"
+        grounding: "[INFERRED]"
+        check_order: 4
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      Hardware vs. software discrimination matters here.
+      Physical diverter fault (sensor/actuator/jam) → field engineer.
+      WCS service or socket issue → WCS subagent.
+      Check WCS logs for E-stop events, sensor fault codes, or actuator errors first.
+
+  - id: tote_packing_to_packed
+    from: at_packing
+    to: packed
+    owning_domain: WCS
+    trigger: >
+      Operator at packing station packs tote contents into a shipping container;
+      WCS records packing complete event at station terminal.
+    trigger_transport: n/a  # operator confirmation
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: station_unavailable
+        detail: "Packing station is down, in error mode, or unmanned"
+        grounding: "[INFERRED]"
+      - class: human_delay
+        detail: "Operator hasn't finished packing"
+        grounding: "[INFERRED]"
+      - class: service_down
+        detail: "WCS not recording packing completion event from station terminal"
+        grounding: "[INFERRED]"
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: ""
+
+  - id: tote_packed_to_labeled
+    from: packed
+    to: labeled
+    owning_domain: WCS
+    trigger: >
+      WCS sends print command to labeling station; print-and-apply unit prints
+      the shipping label and applies it to the package; station acks to WCS.
+    trigger_transport: TCP_socket  # [INFERRED — may be REST or proprietary protocol]
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: hardware_fault
+        detail: "Label printer offline, paper jam, out of labels, or out of ribbon"
+        grounding: "[INFERRED]"
+        check_order: 1
+      - class: connectivity
+        detail: "WCS cannot reach the labeling station controller"
+        grounding: "[INFERRED]"
+        check_order: 2
+      - class: data_missing
+        detail: "Label template or order data not available for label generation"
+        grounding: "[INFERRED]"
+        check_order: 3
+      - class: hardware_fault
+        detail: "Print-and-apply arm mechanical failure — field engineer if physical"
+        grounding: "[INFERRED]"
+        check_order: 4
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      Printer hardware is a frequent culprit. Check printer status (media, connectivity)
+      before diagnosing WCS software. A label printer fault often affects multiple
+      totes simultaneously — look for pattern across stuck orders.
+
+  - id: tote_labeled_to_dispatched
+    from: labeled
+    to: dispatched
+    owning_domain: WCS
+    trigger: >
+      WCS routes package to outbound conveyor lane; package scanned at dock door
+      or loaded onto truck; outbound scan system records dispatch event.
+    trigger_transport: n/a  # dock scan
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: capacity
+        detail: "Outbound conveyor lane or dock backed up"
+        grounding: "[INFERRED]"
+      - class: external
+        detail: "Truck delayed, carrier issue, or dock door not yet assigned"
+        grounding: "[INFERRED]"
+      - class: data_missing
+        detail: "Dock scan not captured — system not recording dispatch event"
+        grounding: "[INFERRED]"
+    dependency_edges:
+      - entity: order
+        state_required: labeled
+        description: "Parent order should reach 'labeled' state before tote dispatched"
+        grounding: "[INFERRED]"
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      Dispatch stalls are usually carrier/logistics issues rather than software faults.
+      If multiple totes are stuck 'labeled' simultaneously, check outbound conveyor
+      and dock door status before escalating to a software diagnosis.
+
+
+# ─── OPEN QUESTIONS FOR ENGINEERS ────────────────────────────────────────────
+# These are the things I couldn't determine from docs alone.
+# Please answer these before this map is used in production routing.
+open_questions:
+  - id: tote_state_names
+    question: >
+      What are the actual state values used in the tote entity's DB record?
+      The state names above are logical — the DB column values (e.g., 'PICKING_COMPLETE'
+      vs 'picking_complete' vs an integer enum) are needed for the db-state-reader tool.
+    grounding: "[NEEDS CODE/SCHEMA]"
+
+  - id: tote_order_cardinality
+    question: >
+      Is the 1 order : 1 tote relationship always true, or can a single order
+      span multiple totes (e.g., large orders consolidated from many bins)?
+      If multi-tote orders exist, how does the order lifecycle advance —
+      when all totes complete, or per-tote?
+    grounding: "[NEEDS CODE]"
+
+  - id: tote_tracking_mechanism
+    question: >
+      How does WCS track a tote on the conveyor — barcode scanners at fixed points,
+      RFID, or weight sensors? What happens when the tote scan is missed (does it
+      use dead-reckoning, or does the tote go to a manual recovery lane)?
+    grounding: "[NEEDS CODE/DOCS]"
+
+  - id: abandoned_trigger
+    question: >
+      What triggers the 'abandoned' terminal state? Is it an explicit operator action,
+      a timeout, or an order cancellation cascading from WMS? Does an abandoned tote
+      need a manual physical recovery process?
+    grounding: "[NEEDS JIRA/DOCS]"
+
+  - id: db_schema_tables
+    question: >
+      Which tables hold the tote lifecycle state? Is there a single tote table
+      or is state spread across multiple tables (e.g., tote header + tote_lines)?
+      What DB type does this client use for the picking schema?
+    grounding: "[NEEDS SCHEMA — discovered at runtime per §4.11]"

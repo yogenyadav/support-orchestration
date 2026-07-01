@@ -1,0 +1,72 @@
+# Eval fixture — synthetic example (not a real incident).
+
+fixture_id: "lpn_order_data_missing_01"
+grounding: "[SYNTHETIC — from skills/lpn-diagnosis/SKILL.md data_missing scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-602"
+  client: "example-client"
+  priority: "P3"
+  description: "Order 66002 stuck in packed state for 4 hours. Label generation failed for this order. Other orders are printing labels fine. This order came in via the client's secondary order channel."
+  entity_type: "order"
+  entity_id: "66002"
+  entity_current_state: "packed"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "LPN"
+  stuck_transition: "packed → labeled"
+  root_cause: "The order record is missing the carrier_service_code field required for label generation. Orders from the client's secondary order channel do not include this field because the secondary channel integration was not updated when the label template was changed last month."
+  blocker_class: "data_missing"
+  fix_applied: "Identified missing carrier_service_code field in the order record. Traced to the secondary channel integration not being updated. Notified client to update their secondary channel integration. Manually populated carrier_service_code for order 66002 (value: GROUND_RESIDENTIAL). Label generated and applied successfully."
+  fix_sql: "UPDATE orders SET carrier_service_code = 'GROUND_RESIDENTIAL' WHERE order_id = '66002';"
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "WCS"   # lifecycle map routes 'packed' → WCS; LPN reached via reroute
+  diagnosis_correct_if:
+    stuck_transition: "packed → labeled"
+    blocker_class: "data_missing"
+  fix_match_if:
+    proposed_fix_must_mention: ["carrier", "label", "missing"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "wcs-db-01.example-client.internal"
+      log_host: "wcs-app-01.example-client.internal"
+      db_port: 1433
+      db_type: "mssql"
+
+  db_state_read:
+    - entity_id: "66002"
+      response:
+        id: "66002"
+        state: "packed"
+        carrier_service_code: null
+        label_error: "missing_required_field: carrier_service_code"
+        source_channel: "secondary"
+        label_template_version: "v2.4"
+        label_attempts: 0
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-094"
+            summary: "Order stuck in packed — label generation failed due to missing carrier_service_code from secondary channel"
+            root_cause: "Order record missing carrier_service_code field required for label generation; secondary order channel integration was not updated when label template changed"
+            blocker_class: "data_missing"
+            fix_summary: "Identified missing carrier_service_code; traced to secondary channel integration not updated; manually populated field value; label generated and applied successfully; notified client to fix integration"
+            similarity: 0.96
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 14:30:05 ERROR LPN label generation for order 66002 FAILED: missing required field 'carrier_service_code'
+          2024-03-15 14:30:05 WARN  LPN: order 66002 from secondary channel — carrier_service_code is null
+          2024-03-15 14:30:05 INFO  LPN: label template v2.4 requires carrier_service_code — field was added in last month's template update

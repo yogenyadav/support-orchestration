@@ -1,0 +1,73 @@
+# Eval fixture — synthetic example (not a real incident).
+# ASRS incidents arrive as reroutes from GTP_PICKING (storage_unavailable blocker).
+# Triage routes to GTP_PICKING (owns 'released' → picking in lifecycle map).
+
+fixture_id: "asrs_order_storage_unavailable_01"
+grounding: "[SYNTHETIC — from skills/asrs-diagnosis/SKILL.md storage_unavailable scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-501"
+  client: "example-client"
+  priority: "P1"
+  description: "Orders stuck in released state for 40 minutes. WES released them successfully but picking engine says it cannot retrieve bins from storage. Affects all orders, not just one."
+  entity_type: "order"
+  entity_id: "55001"
+  entity_current_state: "released"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "ASRS"
+  stuck_transition: "released → picking"
+  root_cause: "The AutoStore ASRS API is unreachable from the picking engine. All bin retrieval requests are timing out. The AutoStore controller appears to have lost network connectivity to the WMS network segment."
+  blocker_class: "storage_unavailable"
+  fix_applied: "Confirmed AutoStore API endpoint was unreachable (ASRS adapter log: connection timeout). Escalated to network/infra team — a switch port serving the AutoStore controller VLAN had failed. Switch port restored; ASRS API reconnected; bin retrievals resumed."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "GTP_PICKING"   # lifecycle map routes 'released' → GTP_PICKING; ASRS reached via reroute
+  diagnosis_correct_if:
+    stuck_transition: "released → picking"
+    blocker_class: "storage_unavailable"
+  fix_match_if:
+    proposed_fix_must_mention: ["ASRS", "retrieval", "network"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "gtp-db-01.example-client.internal"
+      log_host: "gtp-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "55001"
+      response:
+        id: "55001"
+        state: "released"
+        asrs_retrieval_attempted: true
+        asrs_api_reachable: false
+        asrs_error: "connection_timeout"
+        affected_orders_count: 23
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-079"
+            summary: "All bin retrievals timing out — ASRS API unreachable due to network failure"
+            root_cause: "AutoStore ASRS API unreachable from picking engine; all bin retrieval requests timing out; ASRS controller lost network connectivity to WMS network segment"
+            blocker_class: "storage_unavailable"
+            fix_summary: "Confirmed ASRS API endpoint unreachable; escalated to network team — switch port serving ASRS controller VLAN failed; switch port restored; ASRS API reconnected"
+            similarity: 0.97
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 07:20:03 ERROR ASRS adapter: connection timeout to AutoStore API endpoint (192.168.50.10:8443)
+          2024-03-15 07:20:03 WARN  ASRS: bin retrieval request for order 55001 FAILED — API unreachable
+          2024-03-15 07:20:10 ERROR ASRS: 23 bin retrieval requests queued; all failing with connection timeout

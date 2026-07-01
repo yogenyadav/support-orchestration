@@ -1,0 +1,73 @@
+# Eval fixture — synthetic example (not a real incident).
+# Replace with real anonymized incidents when available.
+# Engineers: add [JIRA:<ticket>] reference when grounding with a real case.
+
+fixture_id: "example_order_stuck_prioritized_01"
+grounding: "[SYNTHETIC — from docs/3-agent-design.md §3.3 example]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-001"
+  client: "example-client"
+  priority: "P2"
+  description: "Order 12345 has been in prioritized state for 90 minutes. Client reports orders not shipping."
+  entity_type: "order"
+  entity_id: "12345"
+  entity_current_state: "prioritized"
+
+# ── Ground truth (what the engineer found and did) ────────────────────────────
+ground_truth:
+  owning_domain: "WES"
+  stuck_transition: "prioritized → released"
+  root_cause: "WES emitted release message but picking engine consumer was down; message sat in ActiveMQ queue unconsumed."
+  blocker_class: "consumer_down"
+  fix_applied: "Restarted picking engine consumer service; message was processed within 30 seconds."
+  fix_sql: null   # no DB UPDATE needed — service restart was sufficient
+
+# ── Scoring thresholds ────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "WES"
+  diagnosis_correct_if:
+    stuck_transition: "prioritized → released"
+    blocker_class: "consumer_down"
+  fix_match_if:
+    # Fix-match is fuzzy: did the proposed_fix include restarting the consumer?
+    proposed_fix_must_mention: ["picking engine", "consumer", "restart"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "wes-db-01.example-client.internal"
+      log_host: "wes-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "12345"
+      response:
+        id: "12345"
+        state: "prioritized"
+        consumer_active: false
+        last_release_attempt: null
+        wes_queue_depth: 14
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-031"
+            summary: "Orders stuck in prioritized state; WES picking engine consumer thread was down"
+            root_cause: "WES consumer thread for the picking engine was stopped due to an unhandled exception"
+            blocker_class: "consumer_down"
+            fix_summary: "Restarted the picking engine consumer service; WES drained the backlog within 2 minutes"
+            similarity: 0.96
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 14:23:01 WARN  WES consumer[picking-engine] thread stopped: unhandled exception NullPointerException
+          2024-03-15 14:23:01 ERROR WES consumer[picking-engine] not running — no release messages will be processed
+          2024-03-15 14:23:05 WARN  14 orders queued in prioritized state awaiting consumer restart

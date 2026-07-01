@@ -1,0 +1,26 @@
+# Per-client configuration overlay — example-client
+# Base config lives in support_orchestration/config/base.py
+# Only specify overrides here.
+
+client_id: "example-client"
+display_name: "Example Warehouse Client"
+
+connectivity:
+  tier: "human_relay"           # direct_connect | human_relay | s3_logs
+  log_posture: "human_relay"
+  db_host: null
+  s3_bucket: null
+
+github:
+  client_org: "example-client-org"   # GitHub org for this client's overlay code
+
+db:
+  type: "oracle"                # oracle | postgres | mssql
+  # host/port/credentials come from secrets vault — never here
+
+lifecycle_deltas:
+  # Override state names if this client uses different values in their DB
+  # order_state_map:
+  #   received: "RCV"
+  #   prioritized: "PRIO"
+  # (empty means base map state names are correct for this client)

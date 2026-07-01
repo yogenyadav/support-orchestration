@@ -1,0 +1,71 @@
+# Eval fixture — synthetic example (not a real incident).
+
+fixture_id: "esb_order_bad_input_01"
+grounding: "[SYNTHETIC — from skills/esb-diagnosis/SKILL.md bad_input / DLQ scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-102"
+  client: "example-client"
+  priority: "P3"
+  description: "Order 11002 sent by client WMS 2 hours ago but never appeared in WES. Other orders from the same client are processing normally."
+  entity_type: "order"
+  entity_id: "11002"
+  entity_current_state: "received"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "ESB"
+  stuck_transition: "received → validated"
+  root_cause: "The client WMS sent a malformed order payload missing the required ship_to_address field. ESB validation rejected it and silently moved the message to the dead-letter queue. The order was never ingested."
+  blocker_class: "bad_input"
+  fix_applied: "Located the order in the DLQ. Notified the client WMS team that the payload was missing ship_to_address. Client corrected and re-sent the order; it processed normally."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "ESB"
+  diagnosis_correct_if:
+    stuck_transition: "received → validated"
+    blocker_class: "bad_input"
+  fix_match_if:
+    proposed_fix_must_mention: ["dead-letter", "WMS", "malformed"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "esb-db-01.example-client.internal"
+      log_host: "esb-app-01.example-client.internal"
+      db_port: 5432
+      db_type: "postgres"
+
+  db_state_read:
+    - entity_id: "11002"
+      response:
+        id: "11002"
+        state: "received"
+        activemq_queue: "DLQ.WES-intake"
+        dlq_reason: "validation_failed"
+        validation_error: "missing required field: ship_to_address"
+        source_channel: "secondary"
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-062"
+            summary: "Order missing from WES — found in dead-letter queue with malformed payload"
+            root_cause: "Client WMS sent order payload missing a required field; ESB validation rejected it and moved message to DLQ silently"
+            blocker_class: "bad_input"
+            fix_summary: "Located order in DLQ; notified client WMS team of missing field; client corrected and re-sent the order successfully"
+            similarity: 0.95
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 08:15:44 WARN  ESB validation failed for order 11002: missing required field 'ship_to_address'
+          2024-03-15 08:15:44 INFO  ESB moving message for order 11002 to dead-letter queue: DLQ.WES-intake
+          2024-03-15 08:15:44 INFO  ESB DLQ.WES-intake now contains 1 message (order 11002 from secondary channel)

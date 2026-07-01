@@ -1,0 +1,72 @@
+# Eval fixture — synthetic example (not a real incident).
+# Replace with real anonymized incidents when available.
+
+fixture_id: "esb_order_stuck_queue_01"
+grounding: "[SYNTHETIC — from skills/esb-diagnosis/SKILL.md stuck_queue scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-101"
+  client: "example-client"
+  priority: "P2"
+  description: "Order 11001 submitted by client WMS 45 minutes ago but has not appeared in WES. Client says the order was confirmed sent on their side."
+  entity_type: "order"
+  entity_id: "11001"
+  entity_current_state: "received"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "ESB"
+  stuck_transition: "received → validated"
+  root_cause: "The Camel consumer for the WES-intake ActiveMQ channel is not running. The order message arrived on the channel but no consumer is draining it — the queue is accumulating messages."
+  blocker_class: "stuck_queue"
+  fix_applied: "Restarted the ESB Camel application. The consumer reattached to the WES-intake channel and the queue drained within 90 seconds. All held orders advanced to validated."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "ESB"
+  diagnosis_correct_if:
+    stuck_transition: "received → validated"
+    blocker_class: "stuck_queue"
+  fix_match_if:
+    proposed_fix_must_mention: ["consumer", "restart", "ESB"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "esb-db-01.example-client.internal"
+      log_host: "esb-app-01.example-client.internal"
+      db_port: 5432
+      db_type: "postgres"
+
+  db_state_read:
+    - entity_id: "11001"
+      response:
+        id: "11001"
+        state: "received"
+        activemq_queue: "WES-intake"
+        queue_depth: 47
+        consumer_active: false
+        consumer_thread_status: "stopped"
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-088"
+            summary: "Orders not appearing in WES — Camel consumer for WES-intake channel not running"
+            root_cause: "The Camel consumer for the WES-intake ActiveMQ channel was not running; messages accumulated in the queue"
+            blocker_class: "stuck_queue"
+            fix_summary: "Restarted ESB Camel application; consumer reattached to WES-intake channel and queue drained within 90 seconds"
+            similarity: 0.97
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 09:30:01 ERROR ESB Camel consumer[WES-intake] stopped unexpectedly: connection reset
+          2024-03-15 09:30:02 WARN  ESB WES-intake queue depth: 47 messages — no active consumer
+          2024-03-15 09:30:02 WARN  ESB consumer reconnect attempts: 3/3 failed — consumer stopped

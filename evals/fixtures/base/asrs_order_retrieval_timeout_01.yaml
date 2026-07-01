@@ -1,0 +1,75 @@
+# Eval fixture — synthetic example (not a real incident).
+
+fixture_id: "asrs_order_retrieval_timeout_01"
+grounding: "[SYNTHETIC — from skills/asrs-diagnosis/SKILL.md bin_retrieval_timeout scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-502"
+  client: "example-client"
+  priority: "P2"
+  description: "Order 55002 has been stuck in released state for 25 minutes. ASRS accepted the bin retrieval request for bin B-0044 but the bin has not arrived at pick port 3. Other orders are processing normally."
+  entity_type: "order"
+  entity_id: "55002"
+  entity_current_state: "released"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "ASRS"
+  stuck_transition: "released → picking"
+  root_cause: "Bin B-0044 was accepted for retrieval by the AutoStore system but the robot carrying it has not delivered it to pick port 3. The bin shows as 'in transit' in the AutoStore grid with no movement recorded for 22 minutes — indicative of a robot jam or grid obstruction at grid cell G-14."
+  blocker_class: "bin_retrieval_timeout"
+  fix_applied: "Escalated to engineer with bin ID B-0044, grid cell G-14, and AutoStore robot ID R-07. AutoStore vendor support confirmed a robot fault at G-14. Vendor cleared the fault remotely. Bin delivered to pick port 3 within 5 minutes."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "GTP_PICKING"   # lifecycle map routes 'released' → GTP_PICKING; ASRS reached via reroute
+  diagnosis_correct_if:
+    stuck_transition: "released → picking"
+    blocker_class: "bin_retrieval_timeout"
+  fix_match_if:
+    proposed_fix_must_mention: ["bin", "ASRS", "retrieval"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "gtp-db-01.example-client.internal"
+      log_host: "gtp-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "55002"
+      response:
+        id: "55002"
+        state: "released"
+        asrs_retrieval_accepted: true
+        asrs_bin_status: "in_transit"
+        bin_id: "B-0044"
+        pick_port: 3
+        asrs_retrieval_started_at: "2024-03-15T09:05:00Z"
+        asrs_grid_cell: "G-14"
+        asrs_robot_id: "R-07"
+        transit_duration_minutes: 22
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-082"
+            summary: "ASRS accepted retrieval but bin never arrived at pick port — robot fault at grid cell"
+            root_cause: "ASRS accepted bin retrieval, but the robot carrying the bin has not delivered it; bin shows in-transit with no movement — robot jam or grid obstruction"
+            blocker_class: "bin_retrieval_timeout"
+            fix_summary: "Escalated to engineer with bin ID, grid cell, and robot ID; AutoStore vendor support confirmed robot fault; vendor cleared the fault remotely; bin delivered to pick port"
+            similarity: 0.96
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 09:05:12 INFO  ASRS: bin B-0044 retrieval accepted — robot R-07 assigned — target pick port 3
+          2024-03-15 09:10:00 WARN  ASRS: bin B-0044 at grid cell G-14 — no movement recorded for 5 minutes
+          2024-03-15 09:27:00 ERROR ASRS: bin B-0044 in-transit timeout — no movement for 22 minutes at grid cell G-14 — possible robot jam

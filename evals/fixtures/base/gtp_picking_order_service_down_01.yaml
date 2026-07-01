@@ -1,0 +1,71 @@
+# Eval fixture — synthetic example (not a real incident).
+
+fixture_id: "gtp_picking_order_service_down_01"
+grounding: "[SYNTHETIC — from skills/gtp-picking-diagnosis/SKILL.md service_down scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-201"
+  client: "example-client"
+  priority: "P1"
+  description: "Multiple orders stuck in released state for the past 30 minutes. WES released them but picking hasn't started on any of them. Client is reporting fulfillment backed up."
+  entity_type: "order"
+  entity_id: "22001"
+  entity_current_state: "released"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "GTP_PICKING"
+  stuck_transition: "released → picking"
+  root_cause: "The picking engine service crashed 35 minutes ago and has not restarted. All orders released by WES are sitting in the queue unprocessed — no bin retrieval requests are being sent to ASRS."
+  blocker_class: "service_down"
+  fix_applied: "Restarted the picking engine service. Verified ASRS connectivity after restart. Orders began advancing to picking state within 2 minutes."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "GTP_PICKING"
+  diagnosis_correct_if:
+    stuck_transition: "released → picking"
+    blocker_class: "service_down"
+  fix_match_if:
+    proposed_fix_must_mention: ["restart", "picking engine", "service"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "gtp-db-01.example-client.internal"
+      log_host: "gtp-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "22001"
+      response:
+        id: "22001"
+        state: "released"
+        picking_engine_assigned: false
+        asrs_retrieval_requested: false
+        released_at: "2024-03-15T13:30:00Z"
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-073"
+            summary: "Multiple orders stuck in released state — picking engine service crashed"
+            root_cause: "The picking engine service crashed; all released orders sitting in queue with no bin retrieval requests sent to ASRS"
+            blocker_class: "service_down"
+            fix_summary: "Restarted picking engine service; verified ASRS connectivity after restart; orders advanced to picking within 2 minutes"
+            similarity: 0.97
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 13:25:44 ERROR PickingEngine: unhandled exception — service stopping
+          2024-03-15 13:25:44 ERROR PickingEngine process exited with code 1
+          2024-03-15 13:25:50 WARN  GTP: picking engine not running — no ASRS bin retrieval requests being sent
+          2024-03-15 13:30:00 WARN  GTP: 8 orders in released state with no picking engine to process them

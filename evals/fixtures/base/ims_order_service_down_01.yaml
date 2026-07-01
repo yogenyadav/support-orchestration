@@ -1,0 +1,71 @@
+# Eval fixture — synthetic example (not a real incident).
+
+fixture_id: "ims_order_service_down_01"
+grounding: "[SYNTHETIC — from skills/ims-diagnosis/SKILL.md ims_service_down scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-302"
+  client: "example-client"
+  priority: "P1"
+  description: "Dozens of orders all simultaneously stuck in picking state. Operators at all pick stations report they completed picks but orders are not advancing. Started approximately 20 minutes ago across all stations."
+  entity_type: "order"
+  entity_id: "33002"
+  entity_current_state: "picking"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "IMS"
+  stuck_transition: "picking → picked"
+  root_cause: "The IMS service is not running. All cycle counts at pick completion are failing because IMS is unreachable. IMS is placing holds on every order that completes a pick — effectively halting the entire picking operation."
+  blocker_class: "ims_service_down"
+  fix_applied: "Confirmed IMS health endpoint was unreachable. Restarted the IMS service. Once IMS came back online, all held orders resumed cycle counting and advanced automatically within 3 minutes."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "GTP_PICKING"   # lifecycle map routes 'picking' → GTP_PICKING; IMS reached via reroute
+  diagnosis_correct_if:
+    stuck_transition: "picking → picked"
+    blocker_class: "ims_service_down"
+  fix_match_if:
+    proposed_fix_must_mention: ["IMS", "restart", "service"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "ims-db-01.example-client.internal"
+      log_host: "ims-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "33002"
+      response:
+        id: "33002"
+        state: "picking"
+        ims_hold_active: true
+        ims_health_status: "unreachable"
+        ims_last_heartbeat: null
+        affected_orders_count: 47
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-051"
+            summary: "All pick completions failing — IMS service unreachable causing holds on all orders"
+            root_cause: "IMS service not running; all cycle counts at pick completion failing because IMS is unreachable; IMS placing holds on every order"
+            blocker_class: "ims_service_down"
+            fix_summary: "Confirmed IMS health endpoint was unreachable; restarted IMS service; all held orders resumed cycle counting and advanced automatically"
+            similarity: 0.97
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 12:00:05 ERROR GTP pick completion for order 33002: IMS health check FAILED — connection refused (port 8080)
+          2024-03-15 12:00:05 WARN  IMS unreachable — placing hold on order 33002 (pick completion blocked)
+          2024-03-15 12:00:10 ERROR IMS health check: FAILED for all 5 consecutive attempts — IMS service appears to be down

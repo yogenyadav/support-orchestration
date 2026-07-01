@@ -1,0 +1,74 @@
+# Eval fixture — synthetic example (not a real incident).
+# Replace with real anonymized incidents when available.
+# Engineers: add [JIRA:<ticket>] reference when grounding with a real case.
+
+fixture_id: "wes_order_stuck_at_validated_01"
+grounding: "[SYNTHETIC — WES service_down scenario, validated→prioritized transition]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-004"
+  client: "example-client"
+  priority: "P2"
+  description: "Order 11111 validated by ESB 3 hours ago but never reached prioritized state. Multiple orders accumulating in validated state."
+  entity_type: "order"
+  entity_id: "11111"
+  entity_current_state: "validated"
+
+# ── Ground truth (what the engineer found and did) ────────────────────────────
+ground_truth:
+  owning_domain: "WES"
+  stuck_transition: "validated → prioritized"
+  root_cause: "WES service crashed due to an OOM event on WES-HOST-01 approximately 3 hours ago. All validated orders are queued in ActiveMQ but the WES consumer is not running."
+  blocker_class: "service_down"
+  fix_applied: "Restarted WES service on WES-HOST-01 after confirming sufficient memory headroom (increased JVM heap from 4GB to 6GB). All queued orders were processed within 8 minutes of WES service restart."
+  fix_sql: null   # no DB UPDATE needed — service restart drained the queue
+
+# ── Scoring thresholds ────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "WES"
+  diagnosis_correct_if:
+    stuck_transition: "validated → prioritized"
+    blocker_class: "service_down"
+  fix_match_if:
+    # Fix-match is fuzzy: did the proposed fix address the WES service being down?
+    proposed_fix_must_mention: ["WES", "service", "restart"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "wes-db-01.example-client.internal"
+      log_host: "wes-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "11111"
+      response:
+        id: "11111"
+        state: "validated"
+        wes_consumer_active: false
+        wes_process_running: false
+        validated_at: "2024-03-15T11:00:00Z"
+        stuck_duration_minutes: 180
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-027"
+            summary: "Multiple orders stuck in validated state — WES service not running"
+            root_cause: "WES service crashed due to OOM; all validated orders queued in ActiveMQ but WES consumer not running to process them"
+            blocker_class: "service_down"
+            fix_summary: "Restarted WES service after confirming memory headroom; all queued orders processed within 8 minutes"
+            similarity: 0.96
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 11:00:03 ERROR WES JVM: java.lang.OutOfMemoryError: Java heap space
+          2024-03-15 11:00:03 ERROR WES process terminating due to OOM — no clean shutdown
+          2024-03-15 11:00:03 WARN  WES-HOST-01: WES service is no longer running

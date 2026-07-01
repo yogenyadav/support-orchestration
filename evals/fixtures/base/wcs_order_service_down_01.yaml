@@ -1,0 +1,71 @@
+# Eval fixture — synthetic example (not a real incident).
+
+fixture_id: "wcs_order_service_down_01"
+grounding: "[SYNTHETIC — from skills/wcs-diagnosis/SKILL.md wcs_service_down scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-402"
+  client: "example-client"
+  priority: "P1"
+  description: "Order 44002 stuck in on_takeaway state for 2 hours. Tote is physically on the conveyor but WCS hasn't moved it forward. Multiple other totes also appear to be stuck on the takeaway conveyor."
+  entity_type: "order"
+  entity_id: "44002"
+  entity_current_state: "on_takeaway"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "WCS"
+  stuck_transition: "on_takeaway → sorted"
+  root_cause: "The WCS Windows service crashed 2 hours ago due to an unhandled exception. The service has not auto-restarted. Totes are physically on the conveyor but WCS is not processing sorter/divert instructions or tracking movement."
+  blocker_class: "wcs_service_down"
+  fix_applied: "Confirmed WCS Windows service was stopped (Windows Event Log showed crash dump). Restarted the service via PowerShell remote: Restart-Service WCSRoutingService. Service came up and began processing queued totes within 90 seconds. Also verified MS SQL connectivity was intact after restart."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "WCS"
+  diagnosis_correct_if:
+    stuck_transition: "on_takeaway → sorted"
+    blocker_class: "wcs_service_down"
+  fix_match_if:
+    proposed_fix_must_mention: ["WCS", "Windows service", "restart"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "wcs-db-01.example-client.internal"
+      log_host: "wcs-app-01.example-client.internal"
+      db_port: 1433
+      db_type: "mssql"
+
+  db_state_read:
+    - entity_id: "44002"
+      response:
+        id: "44002"
+        state: "on_takeaway"
+        wcs_service_running: false
+        wcs_process_status: "stopped"
+        on_takeaway_since: "2024-03-15T10:00:00Z"
+        stuck_duration_minutes: 120
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-066"
+            summary: "Totes stuck on takeaway conveyor — WCS Windows service crashed with unhandled exception"
+            root_cause: "WCS Windows service crashed due to an unhandled exception; service has not auto-restarted; no sorter/divert instructions being processed"
+            blocker_class: "wcs_service_down"
+            fix_summary: "Confirmed WCS Windows service stopped via Windows Event Log crash dump; restarted service via PowerShell Restart-Service WCSRoutingService; service came up and processed queued totes"
+            similarity: 0.97
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 10:00:12 ERROR WCSRoutingService: Unhandled exception: System.NullReferenceException at SorterControl.ProcessDivert()
+          2024-03-15 10:00:12 ERROR WCSRoutingService: Service stopping due to fatal exception
+          2024-03-15 10:00:13 WARN  Windows Event Log: WCSRoutingService terminated unexpectedly — crash dump generated

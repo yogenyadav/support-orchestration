@@ -1,0 +1,74 @@
+# Eval fixture — synthetic example (not a real incident).
+# LPN incidents arrive as reroutes from WCS (packed → labeled is in WCS lifecycle map area).
+# Triage routes to WCS (owns 'packed' state); LPN reached via reroute.
+
+fixture_id: "lpn_order_printer_fault_01"
+grounding: "[SYNTHETIC — from skills/lpn-diagnosis/SKILL.md hardware_fault_printer scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-601"
+  client: "example-client"
+  priority: "P2"
+  description: "12 orders stuck in packed state at labeling station 2 for the past 30 minutes. Labels are not being printed. Other labeling stations appear to be working normally."
+  entity_type: "order"
+  entity_id: "66001"
+  entity_current_state: "packed"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "LPN"
+  stuck_transition: "packed → labeled"
+  root_cause: "The thermal label printer at labeling station 2 is out of label stock. WCS sent print commands to the station controller but the printer returned a 'media out' error. All 12 orders routed to station 2 are waiting for the printer to recover."
+  blocker_class: "hardware_fault_printer"
+  fix_applied: "Operator at labeling station 2 replaced the label roll. Printer came back online. WCS automatically retried the pending print jobs; all 12 orders advanced to labeled within 2 minutes."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "WCS"   # lifecycle map routes 'packed' → WCS; LPN reached via reroute
+  diagnosis_correct_if:
+    stuck_transition: "packed → labeled"
+    blocker_class: "hardware_fault_printer"
+  fix_match_if:
+    proposed_fix_must_mention: ["printer", "label", "station"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "wcs-db-01.example-client.internal"
+      log_host: "wcs-app-01.example-client.internal"
+      db_port: 1433
+      db_type: "mssql"
+
+  db_state_read:
+    - entity_id: "66001"
+      response:
+        id: "66001"
+        state: "packed"
+        label_station: 2
+        print_status: "media_out_error"
+        printer_id: "LABEL-STATION-02-A"
+        print_attempts: 3
+        affected_orders_at_station: 12
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-091"
+            summary: "Orders stuck in packed at labeling station — printer out of label stock returning MEDIA_OUT error"
+            root_cause: "Thermal label printer at the affected station is out of label stock; WCS sent print commands but printer returned media out error; all orders routed to that station are waiting"
+            blocker_class: "hardware_fault_printer"
+            fix_summary: "Operator replaced the label roll at the station; printer came back online; WCS automatically retried pending print jobs; all affected orders advanced to labeled"
+            similarity: 0.97
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 11:15:22 ERROR LPN printer[LABEL-STATION-02-A]: print job for order 66001 FAILED — MEDIA_OUT
+          2024-03-15 11:15:22 WARN  LPN: printer LABEL-STATION-02-A status: media_out_error — label stock empty
+          2024-03-15 11:15:30 WARN  LPN: 12 orders queued at station 2 awaiting printer recovery

@@ -1,0 +1,76 @@
+# Eval fixture — synthetic example (not a real incident).
+# Infra incidents arrive as reroutes from any domain when VM/OS layer is suspected.
+# This fixture uses prioritized state (WES domain) where WES crashed due to OOM,
+# causing orders to stall; the reroute from WES identifies infra as the root cause.
+
+fixture_id: "infra_order_oom_crash_01"
+grounding: "[SYNTHETIC — from skills/infra-diagnosis/SKILL.md oom_crash scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-701"
+  client: "example-client"
+  priority: "P1"
+  description: "WES service crashed and is not responding. All orders in prioritized state are not being released. WES process is absent from the server. WES log shows it stopped abruptly with no clean shutdown entry."
+  entity_type: "order"
+  entity_id: "77001"
+  entity_current_state: "prioritized"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "infra"
+  stuck_transition: "prioritized → released"
+  root_cause: "The WES JVM was killed by the Linux OOM killer. The WES host VM had been under sustained memory pressure for 2 hours due to VMware memory ballooning (ESXi host was overcommitted). The JVM heap hit its limit and the OS OOM killer selected the WES process."
+  blocker_class: "oom_crash"
+  fix_applied: "Confirmed OOM kill in /var/log/syslog (oom-killer log entry for the WES JVM process). Waited for memory to reclaim (balloon driver released memory back to VM). Restarted WES service. Notified engineer to: (1) adjust JVM -Xmx config to leave OS headroom, (2) work with vSphere admin to reduce memory overcommit on the ESXi host."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "WES"   # lifecycle map routes 'prioritized' → WES; infra reached via reroute
+  diagnosis_correct_if:
+    stuck_transition: "prioritized → released"
+    blocker_class: "oom_crash"
+  fix_match_if:
+    proposed_fix_must_mention: ["OOM", "memory", "restart"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "wes-db-01.example-client.internal"
+      log_host: "wes-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "77001"
+      response:
+        id: "77001"
+        state: "prioritized"
+        wes_process_running: false
+        wes_last_heartbeat: "2024-03-15T09:00:05Z"
+        wes_host: "WES-HOST-01"
+        vm_memory_used_gb: 7.9
+        vm_memory_total_gb: 8.0
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-022"
+            summary: "WES service crashed — OOM killer killed WES JVM due to VMware memory ballooning"
+            root_cause: "WES JVM killed by Linux OOM killer; WES host VM under sustained memory pressure due to VMware memory ballooning from ESXi host overcommit"
+            blocker_class: "oom_crash"
+            fix_summary: "Confirmed OOM kill in syslog; waited for memory reclaim; restarted WES service; recommended JVM heap reduction and reducing ESXi memory overcommit"
+            similarity: 0.97
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 09:00:03 CRIT  kernel: Out of memory: Kill process 12847 (java) score 782 or sacrifice child
+          2024-03-15 09:00:03 CRIT  kernel: Killed process 12847 (java) total-vm:8192000kB, anon-rss:7842816kB
+          2024-03-15 09:00:04 WARN  systemd: WES service (wes-engine.service) terminated with signal KILL
+          2024-03-15 09:00:04 INFO  vmware-balloon: ballooning 512MB from WES-HOST-01 back to ESXi host

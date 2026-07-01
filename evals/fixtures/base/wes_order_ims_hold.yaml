@@ -1,0 +1,69 @@
+# Eval fixture — synthetic example (not a real incident).
+# Replace with real anonymized incidents when available.
+# Engineers: add [JIRA:<ticket>] reference when grounding with a real case.
+
+fixture_id: "wes_order_ims_hold_01"
+grounding: "[SYNTHETIC — from docs/1-warehouse-systems.md §1.4 IMS hold scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-003"
+  client: "example-client"
+  priority: "P1"
+  description: "Order 54321 stuck in prioritized state for 45 minutes. Client reports high-priority order not shipping."
+  entity_type: "order"
+  entity_id: "54321"
+  entity_current_state: "prioritized"
+
+# ── Ground truth (what the engineer found and did) ────────────────────────────
+ground_truth:
+  owning_domain: "WES"
+  stuck_transition: "prioritized → released"
+  root_cause: "IMS deliberate hold placed on order 54321 due to cycle count discrepancy on location BIN-447. WES correctly blocked release pending IMS resolution — this is expected behavior, not a bug."
+  blocker_class: "ims_hold"
+  fix_applied: "Identified IMS count discrepancy on BIN-447 (expected 12 units, system showed 9). Operator corrected physical count; IMS resolved hold automatically. Order 54321 released by WES within 2 minutes."
+  fix_sql: null   # no SQL needed — IMS hold cleared by operator count correction
+
+# ── Scoring thresholds ────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "WES"
+  diagnosis_correct_if:
+    stuck_transition: "prioritized → released"
+    blocker_class: "ims_hold"
+  fix_match_if:
+    # Fix-match is fuzzy: did the proposed fix address the IMS hold / count discrepancy?
+    proposed_fix_must_mention: ["IMS", "hold", "count"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "wes-db-01.example-client.internal"
+      log_host: "wes-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "54321"
+      response:
+        id: "54321"
+        state: "prioritized"
+        ims_hold_active: true
+        ims_hold_bin: "BIN-447"
+        ims_hold_reason: "count_discrepancy"
+        ims_expected_qty: 12
+        ims_actual_qty: 9
+        wes_release_blocked: true
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-041"
+            summary: "Order stuck in prioritized — IMS count-hold on bin BIN-447 blocking WES release"
+            root_cause: "IMS placed a deliberate hold due to count discrepancy on a bin needed for the order; WES correctly blocked release"
+            blocker_class: "ims_hold"
+            fix_summary: "Operator corrected the physical count at the bin; IMS released the hold; WES automatically released the order"
+            similarity: 0.95

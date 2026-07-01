@@ -1,0 +1,76 @@
+# Eval fixture — synthetic example (not a real incident).
+# GTP Decant incidents surface as bin_unavailable in GTP_PICKING (released → picking).
+# Triage routes to GTP_PICKING (owns 'released' in lifecycle map);
+# the GTP_PICKING subagent identifies the root cause is a decant failure and reroutes.
+
+fixture_id: "gtp_decant_bin_not_placed_01"
+grounding: "[SYNTHETIC — from skills/gtp-decant-diagnosis/SKILL.md bin_not_placed scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-801"
+  client: "example-client"
+  priority: "P2"
+  description: "Order 88001 stuck in released state for 2 hours. Picking engine says it cannot find bin B-3301 in storage — ASRS returns 'bin not found'. Client's inbound team says they processed the supplier delivery containing B-3301 this morning."
+  entity_type: "order"
+  entity_id: "88001"
+  entity_current_state: "released"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "GTP_DECANT"
+  stuck_transition: "released → picking"
+  root_cause: "Bin B-3301 was scanned at the decant station during the morning inbound process but ASRS never confirmed placement. The decant log shows the placement request was sent to ASRS but ASRS returned an error (bin barcode not recognized — the barcode label was damaged during transit). The bin is physically in the decant staging area but was never stored."
+  blocker_class: "bin_not_placed"
+  fix_applied: "Decant operator re-labelled bin B-3301 with a freshly printed LPN label. Retried the ASRS placement — ASRS accepted and confirmed placement. Bin became available in ASRS. Order picked up the bin retrieval request and advanced to picking within 5 minutes."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "GTP_PICKING"   # lifecycle map routes 'released' → GTP_PICKING; decant reached via reroute
+  diagnosis_correct_if:
+    stuck_transition: "released → picking"
+    blocker_class: "bin_not_placed"
+  fix_match_if:
+    proposed_fix_must_mention: ["bin", "decant", "placement"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "gtp-db-01.example-client.internal"
+      log_host: "gtp-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "88001"
+      response:
+        id: "88001"
+        state: "released"
+        required_bin_id: "B-3301"
+        asrs_bin_status: "not_found"
+        decant_placement_attempted: true
+        decant_placement_status: "failed"
+        decant_error: "ASRS barcode not recognized"
+        bin_physical_location: "decant_staging_area"
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-085"
+            summary: "Order released but bin not in ASRS — decant placement failed due to damaged barcode label"
+            root_cause: "Bin was scanned at decant station during inbound but ASRS returned barcode recognition error; placement request failed; bin physically in decant staging area but never stored"
+            blocker_class: "bin_not_placed"
+            fix_summary: "Decant operator re-labelled bin with freshly printed LPN label; retried ASRS placement — accepted and confirmed; order advanced to picking within 5 minutes"
+            similarity: 0.97
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 07:45:12 INFO  Decant: processing bin B-3301 from inbound delivery — sending placement request to ASRS
+          2024-03-15 07:45:13 ERROR ASRS: placement FAILED for bin B-3301 — barcode not recognized (damaged label?)
+          2024-03-15 07:45:13 WARN  Decant: bin B-3301 placement failed — bin remains in decant staging area, not stored in ASRS

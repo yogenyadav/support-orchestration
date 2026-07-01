@@ -1,0 +1,70 @@
+# Eval fixture — synthetic example (not a real incident).
+# IMS incidents arrive as reroutes from GTP_PICKING when ims_hold_active = true.
+# Triage routes to GTP_PICKING (owns the 'picking' state in the lifecycle map);
+# the IMS subagent is invoked after the reroute.
+
+fixture_id: "ims_order_count_discrepancy_01"
+grounding: "[SYNTHETIC — from skills/ims-diagnosis/SKILL.md count_discrepancy scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-301"
+  client: "example-client"
+  priority: "P2"
+  description: "Order 33001 stuck in picking state. IMS alert was raised: cycle count discrepancy on item SKU-7789 in bin B-2201 during pick completion. Engineer requests count-correction guidance."
+  entity_type: "order"
+  entity_id: "33001"
+  entity_current_state: "picking"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "IMS"
+  stuck_transition: "picking → picked"
+  root_cause: "IMS cycle count at pick completion recorded item SKU-7789 expected qty 4 but actual qty 3 in bin B-2201. One unit was consumed by a prior order that did not record a pick completion correctly. IMS placed a deliberate hold."
+  blocker_class: "count_discrepancy"
+  fix_applied: "Engineer performed physical count at bin B-2201: confirmed qty 3. Updated IMS count to 3. Released the IMS hold. Order advanced to picked automatically."
+  fix_sql: null   # IMS count-correction is via IMS API/UI, not a raw SQL UPDATE
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "GTP_PICKING"   # lifecycle map routes 'picking' → GTP_PICKING; IMS reached via reroute
+  diagnosis_correct_if:
+    stuck_transition: "picking → picked"
+    blocker_class: "count_discrepancy"
+  fix_match_if:
+    proposed_fix_must_mention: ["count", "bin", "IMS"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "ims-db-01.example-client.internal"
+      log_host: "ims-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "33001"
+      response:
+        id: "33001"
+        state: "picking"
+        ims_hold_active: true
+        ims_discrepancy: true
+        bin_id: "B-2201"
+        sku: "SKU-7789"
+        expected_qty: 4
+        actual_qty: 3
+        hold_reason: "count_discrepancy_at_pick_completion"
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-044"
+            summary: "IMS count discrepancy at pick completion — hold placed on order; count-correction required"
+            root_cause: "IMS cycle count at pick completion recorded an item quantity discrepancy; IMS placed a deliberate hold"
+            blocker_class: "count_discrepancy"
+            fix_summary: "Engineer performed physical count at bin; corrected IMS count; released the IMS hold; order advanced to picked automatically"
+            similarity: 0.97

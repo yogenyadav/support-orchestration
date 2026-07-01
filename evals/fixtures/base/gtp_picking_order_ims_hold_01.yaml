@@ -1,0 +1,66 @@
+# Eval fixture — synthetic example (not a real incident).
+
+fixture_id: "gtp_picking_order_ims_hold_01"
+grounding: "[SYNTHETIC — from skills/gtp-picking-diagnosis/SKILL.md ims_hold at picking→picked]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-202"
+  client: "example-client"
+  priority: "P2"
+  description: "Order 22002 has been in picking state for 3 hours. Operator at pick station says they completed the pick but the order hasn't advanced."
+  entity_type: "order"
+  entity_id: "22002"
+  entity_current_state: "picking"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "IMS"
+  stuck_transition: "picking → picked"
+  root_cause: "IMS cycle count at pick completion found a discrepancy: item SKU-4421 in bin B-1138 showed expected qty 3 but actual qty 2. IMS placed a deliberate hold on the order at the picking→picked transition."
+  blocker_class: "ims_hold"
+  fix_applied: "Confirmed the count discrepancy in IMS. Operator performed physical count at bin B-1138 confirming qty 2. IMS count corrected to 2. IMS hold released; order advanced to picked."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "GTP_PICKING"   # lifecycle map routes 'picking' state to GTP_PICKING
+  diagnosis_correct_if:
+    stuck_transition: "picking → picked"
+    blocker_class: "ims_hold"
+  fix_match_if:
+    proposed_fix_must_mention: ["IMS", "count", "hold"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "gtp-db-01.example-client.internal"
+      log_host: "gtp-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "22002"
+      response:
+        id: "22002"
+        state: "picking"
+        ims_hold_active: true
+        ims_hold_bin: "B-1138"
+        ims_hold_sku: "SKU-4421"
+        ims_expected_qty: 3
+        ims_actual_qty: 2
+        pick_completion_attempted: true
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-058"
+            summary: "Order stuck at picking — IMS count discrepancy at pick completion created hold"
+            root_cause: "IMS cycle count at pick completion found a discrepancy; IMS placed a deliberate hold blocking the picking→picked transition"
+            blocker_class: "ims_hold"
+            fix_summary: "Confirmed the count discrepancy; operator performed physical count and corrected IMS; hold released; order advanced to picked"
+            similarity: 0.96

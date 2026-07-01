@@ -1,0 +1,72 @@
+# Eval fixture — synthetic example (not a real incident).
+
+fixture_id: "wcs_order_socket_failure_01"
+grounding: "[SYNTHETIC — from skills/wcs-diagnosis/SKILL.md socket_failure scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-401"
+  client: "example-client"
+  priority: "P1"
+  description: "All orders that completed picking in the last hour are stuck in picked state. WES has sent the takeaway instruction to WCS but no orders are moving to on_takeaway. Started suddenly about 65 minutes ago."
+  entity_type: "order"
+  entity_id: "44001"
+  entity_current_state: "picked"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "WCS"
+  stuck_transition: "picked → on_takeaway"
+  root_cause: "The WES→WCS TCP socket dropped 65 minutes ago and was not re-established. WCS is not receiving the takeaway instructions from WES. Multiple orders are affected because the single socket serves all WES→WCS communication."
+  blocker_class: "socket_failure"
+  fix_applied: "Confirmed socket was in half-open state (WCS log showed no active connection). Restarted the WCS socket listener service component. Socket reconnected within 30 seconds; WES retried all pending instructions and orders began advancing."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "WCS"
+  diagnosis_correct_if:
+    stuck_transition: "picked → on_takeaway"
+    blocker_class: "socket_failure"
+  fix_match_if:
+    proposed_fix_must_mention: ["socket", "WCS", "restart"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "wcs-db-01.example-client.internal"
+      log_host: "wcs-app-01.example-client.internal"
+      db_port: 1433
+      db_type: "mssql"
+
+  db_state_read:
+    - entity_id: "44001"
+      response:
+        id: "44001"
+        state: "picked"
+        wcs_takeaway_instruction_sent: true
+        wcs_instruction_acknowledged: false
+        wcs_socket_status: "half_open"
+        wcs_last_message_received: null
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-033"
+            summary: "All orders in picked state — WES→WCS TCP socket dropped; WCS not receiving takeaway instructions"
+            root_cause: "The WES→WCS TCP socket dropped and was not re-established; WCS not receiving takeaway instructions affecting all orders"
+            blocker_class: "socket_failure"
+            fix_summary: "Confirmed socket in half-open state from WCS log; restarted WCS socket listener; socket reconnected; WES retried all pending instructions"
+            similarity: 0.97
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 08:55:01 WARN  WCS socket[WES-intake]: connection lost — remote host closed connection
+          2024-03-15 08:55:01 ERROR WCS socket[WES-intake]: reconnect attempt 1/3 FAILED
+          2024-03-15 08:55:03 ERROR WCS socket[WES-intake]: reconnect attempt 3/3 FAILED — socket in half-open state
+          2024-03-15 08:55:03 WARN  WCS: no active WES connection — all takeaway instructions will be buffered

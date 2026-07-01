@@ -1,0 +1,74 @@
+# Eval fixture — synthetic example (not a real incident).
+# Replace with real anonymized incidents when available.
+# Engineers: add [JIRA:<ticket>] reference when grounding with a real case.
+
+fixture_id: "wes_order_lost_ack_01"
+grounding: "[SYNTHETIC — from docs/1-warehouse-systems.md §1.3 lost-ack scenario]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-002"
+  client: "example-client"
+  priority: "P2"
+  description: "Order 67890 has been in prioritized state for 2 hours. Picking engine shows order as active, but WES still shows prioritized."
+  entity_type: "order"
+  entity_id: "67890"
+  entity_current_state: "prioritized"
+
+# ── Ground truth (what the engineer found and did) ────────────────────────────
+ground_truth:
+  owning_domain: "WES"
+  stuck_transition: "prioritized → released"
+  root_cause: "WES emitted release and picking engine consumed it, but the ack message back to WES was dropped in transit. WES remained waiting for ack; picking engine was already working the order."
+  blocker_class: "lost_ack"
+  fix_applied: "Confirmed picking engine had the order in active picking state. Restarted WES ack listener for order 67890; WES re-polled picking engine and advanced order state within 90 seconds."
+  fix_sql: null   # no DB UPDATE needed — WES internal state corrected via service restart
+
+# ── Scoring thresholds ────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "WES"
+  diagnosis_correct_if:
+    stuck_transition: "prioritized → released"
+    blocker_class: "lost_ack"
+  fix_match_if:
+    # Fix-match is fuzzy: did the proposed fix address the lost ack / picking engine already active?
+    proposed_fix_must_mention: ["ack", "picking engine", "WES"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "wes-db-01.example-client.internal"
+      log_host: "wes-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "67890"
+      response:
+        id: "67890"
+        state: "prioritized"
+        release_sent: true
+        ack_received: false
+        picking_engine_order_status: "active_picking"
+        wes_ack_listener_status: "waiting"
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-019"
+            summary: "Order in prioritized; WES shows release sent but ack never returned"
+            root_cause: "WES emitted release, picking engine consumed it, but the ack message was dropped in transit — WES remained waiting"
+            blocker_class: "lost_ack"
+            fix_summary: "Confirmed picking engine had the order in active picking state. Restarted WES ack listener; WES re-polled picking engine and advanced order state"
+            similarity: 0.97
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 10:01:12 INFO  WES released order 67890 to picking engine — awaiting ack
+          2024-03-15 10:01:13 INFO  Picking engine consumed release for order 67890 — status: active_picking
+          2024-03-15 10:01:13 WARN  WES ack listener: no ack received for order 67890 after 7200s — ack may have been dropped

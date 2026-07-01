@@ -1,0 +1,542 @@
+# Lifecycle-to-domain map: ORDER entity
+# Version: 0.1-DRAFT
+#
+# WARNING — EVERYTHING MARKED [INFERRED] IS NOT GROUNDED IN REAL CODE OR SCHEMA.
+# Source: docs/1-warehouse-systems.md + docs/2-support-process.md only.
+# Engineers: please review and correct state names, transition triggers, and blocker lists.
+# When grounded in real code/Jira, replace [INFERRED] with [CODE:<file>] or [JIRA:<ticket>].
+#
+# Format note:
+#   - States: logical state names (NOT DB column values — those vary per client and are
+#     discovered at runtime from GitHub code + info_schema introspection).
+#   - Transitions: owning_domain is who diagnoses when it stalls (not necessarily who triggers it).
+#   - ims_check_first: true means CHECK IMS HOLD BEFORE ANY OTHER HYPOTHESIS.
+#   - blocker_class references the shared blocker_classes section at the bottom.
+
+entity: order
+schema_version: "0.1-draft"
+
+# ─── STATES ─────────────────────────────────────────────────────────────────
+# Logical states in lifecycle order. DB column name and value strings vary per
+# client — discovered at runtime from client's GitHub repo or info_schema.
+states:
+  received:
+    description: "Order ingested from client WMS via ESB"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  validated:
+    description: "Order structure and content validated by ESB/WES"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  prioritized:
+    description: "Order assigned fulfillment priority by WES/OE"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  released:
+    description: "WES has emitted a release to the picking engine; awaiting ack"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  picking:
+    description: "Picking engine instructed storage; bins being retrieved; operator picking"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  picked:
+    description: "All items picked into tote; IMS cycle count passed; ack sent to WES"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  on_takeaway:
+    description: "Tote on takeaway conveyor; WCS has acknowledged placement"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  sorted:
+    description: "Tote diverted to correct chute by WCS/sorter"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  packed:
+    description: "Items packed into shipping container at packing station"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  labeled:
+    description: "Shipping label printed and applied"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  loaded:
+    description: "Package on outbound conveyor"
+    terminal: false
+    grounding: "[INFERRED]"
+
+  shipped:
+    description: "Package dispatched on truck — terminal success state"
+    terminal: true
+    grounding: "[INFERRED]"
+
+  cancelled:
+    description: "Order cancelled by client WMS or operator — terminal"
+    terminal: true
+    grounding: "[INFERRED]"
+
+  error:
+    description: "Order in an unrecoverable error state — terminal (rare)"
+    terminal: true
+    grounding: "[INFERRED]"
+
+
+# ─── TRANSITIONS ─────────────────────────────────────────────────────────────
+# Each transition is the unit of diagnosis: find the stuck transition → owning
+# domain → blocker checklist. Ordered from earliest to latest in the lifecycle.
+transitions:
+
+  - id: received_to_validated
+    from: received
+    to: validated
+    owning_domain: ESB
+    trigger: >
+      Client WMS pushes order to ESB; Apache Camel route validates order structure
+      and routes it to WES/OE queue.
+    trigger_transport: ActiveMQ
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: stuck_queue
+        detail: "ESB ActiveMQ queue has messages but consumer is dead or paused"
+        grounding: "[INFERRED]"
+      - class: consumer_down
+        detail: "Camel route not running; no consumer on the WES-intake channel"
+        grounding: "[INFERRED]"
+      - class: bad_input
+        detail: "WMS sent malformed order payload; ESB validation rejected it (check dead-letter queue)"
+        grounding: "[INFERRED]"
+      - class: misconfiguration
+        detail: "Camel route config mismatch between base and client overlay"
+        grounding: "[INFERRED]"
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      Check ESB dead-letter queue first — a malformed order from the client WMS goes
+      there silently and is often missed. Then check the Camel route is active.
+
+  - id: validated_to_prioritized
+    from: validated
+    to: prioritized
+    owning_domain: WES
+    trigger: >
+      WES/OE receives validated order from ESB queue; assigns priority per configured
+      rules; moves order to prioritized state.
+    trigger_transport: ActiveMQ
+    ims_check_first: false
+    ims_halt_possible: true
+    ims_halt_note: "IMS can halt at WES layer (see §1.4)"
+    candidate_blockers:
+      - class: service_down
+        detail: "WES service not running or unresponsive"
+        grounding: "[INFERRED]"
+      - class: capacity
+        detail: "WES priority queue saturated — too many orders competing"
+        grounding: "[INFERRED]"
+      - class: misconfiguration
+        detail: "Priority rule config mismatch for this client's order type"
+        grounding: "[INFERRED]"
+      - class: ims_hold
+        detail: "IMS hold blocking WES from advancing this order"
+        grounding: "[INFERRED from §1.4]"
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      If WES is healthy and processing other orders, check whether this order type
+      matches the WES priority-rule config in the client overlay.
+
+  - id: prioritized_to_released
+    from: prioritized
+    to: released
+    owning_domain: WES
+    trigger: >
+      WES emits a release message to the picking engine (via ActiveMQ or REST depending
+      on client). Picking engine must consume the message and ack back to WES.
+      WES considers the order 'released' only when the ack is received.
+    trigger_transport: ActiveMQ  # [INFERRED — may be REST for some clients]
+    ims_check_first: true        # IMS hold is common here — check before chasing software bug
+    ims_halt_possible: true
+    ims_halt_note: >
+      IMS count discrepancy can place a deliberate hold that prevents release.
+      This is not a bug — it is correct behavior. Verify with IMS before diagnosing WES.
+    candidate_blockers:
+      - class: ims_hold
+        detail: "IMS deliberate hold on this order — count discrepancy must be resolved first"
+        grounding: "[INFERRED from §1.4 + §3.3 explicit example]"
+        check_order: 1
+      - class: lost_ack
+        detail: >
+          WES emitted release and picking engine consumed it, but ack back to WES was
+          dropped in transit. WES stays in 'released' waiting; picking engine already
+          working. Classic maddening failure.
+        grounding: "[INFERRED from §1.3 — explicitly documented]"
+        check_order: 2
+      - class: consumer_down
+        detail: "Picking engine consumer not running; release message sitting in queue unconsumed"
+        grounding: "[INFERRED]"
+        check_order: 3
+      - class: stuck_queue
+        detail: "ActiveMQ queue backed up; release message queued behind many others"
+        grounding: "[INFERRED]"
+        check_order: 4
+      - class: capacity
+        detail: "WES release backlog — too many concurrent pending releases"
+        grounding: "[INFERRED]"
+        check_order: 5
+    dependency_edges:
+      - entity: bin
+        state_required: available
+        description: "Bins must be available in storage for picking to proceed after release"
+        grounding: "[INFERRED]"
+    grounding: "[INFERRED — this transition is the explicit example in §3.3]"
+    diagnostic_note: >
+      DISTINGUISH two stuck-in-released scenarios:
+      (A) WES hasn't released yet → WES queue / IMS hold.
+      (B) WES released, picking engine consumed, ack lost → picking engine is already working.
+      Check picking engine state before assuming WES is the blocker.
+
+  - id: released_to_picking
+    from: released
+    to: picking
+    owning_domain: GTP_PICKING
+    trigger: >
+      Picking engine processes the release; requests bins from storage system
+      (ASRS — client-specific implementation). Transitions order to 'picking' once
+      bin retrieval is underway and a pick station is assigned.
+    trigger_transport: proprietary_storage_protocol  # [INFERRED — ASRS proprietary protocol]
+    ims_check_first: false
+    ims_halt_possible: true
+    ims_halt_note: "IMS can halt at picking layer"
+    candidate_blockers:
+      - class: storage_unavailable
+        detail: "ASRS (Automated Storage and Retrieval System) not responding to bin retrieval request"
+        grounding: "[INFERRED]"
+      - class: bin_unavailable
+        detail: "Required bin not located in storage (mislaid, damaged, or not placed during decant)"
+        grounding: "[INFERRED]"
+      - class: service_down
+        detail: "Picking engine service down or crashed"
+        grounding: "[INFERRED]"
+      - class: capacity
+        detail: "No available pick ports/stations — all occupied"
+        grounding: "[INFERRED]"
+      - class: ims_hold
+        detail: "IMS hold blocking picking from starting"
+        grounding: "[INFERRED from §1.4]"
+    dependency_edges:
+      - entity: bin
+        state_required: at_port
+        description: "Bin must arrive at pick port before operator can pick items"
+        grounding: "[INFERRED]"
+      - entity: tote
+        state_required: open_for_picking
+        description: "A tote must be opened and assigned at the pick station"
+        grounding: "[INFERRED]"
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      Client variant is load-bearing here: ASRS implementations vary by client
+      failure signatures. Identify storage system from client overlay before diagnosing.
+      Check client config for ASRS type and its health endpoint.
+
+  - id: picking_to_picked
+    from: picking
+    to: picked
+    owning_domain: GTP_PICKING
+    trigger: >
+      Operator picks all required items into the tote; picking engine records completion;
+      IMS cycle count runs and passes; picking engine sends completion ack to WES.
+    trigger_transport: n/a  # human action at pick station
+    ims_check_first: true   # IMS HALT IS COMMON HERE — check first
+    ims_halt_possible: true
+    ims_halt_note: >
+      IMS cycle count happens at pick completion. If counts don't reconcile, IMS
+      DELIBERATELY halts — this is not a bug. Do not diagnose further until IMS
+      state is confirmed. See §1.4.
+    candidate_blockers:
+      - class: ims_hold
+        detail: "IMS cycle count discrepancy — deliberate halt awaiting count correction"
+        grounding: "[INFERRED from §1.4 — CHECK THIS FIRST]"
+        check_order: 1
+      - class: human_delay
+        detail: "Operator hasn't completed picking — human pacing issue, not software"
+        grounding: "[INFERRED]"
+        check_order: 2
+      - class: inventory_mismatch
+        detail: "Bin is empty or has wrong items — operator can't complete pick"
+        grounding: "[INFERRED]"
+        check_order: 3
+      - class: lost_ack
+        detail: "Operator completed picking but picking engine failed to record completion or ack to WES was lost"
+        grounding: "[INFERRED from §1.3]"
+        check_order: 4
+    dependency_edges:
+      - entity: tote
+        state_required: picking_in_progress
+        description: "Tote must be in active picking state"
+        grounding: "[INFERRED]"
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      IMS hold masquerades as a picking stall. ALWAYS verify IMS has no hold on this
+      order before assuming the picking engine is stuck. A held order is intentional.
+
+  - id: picked_to_on_takeaway
+    from: picked
+    to: on_takeaway
+    owning_domain: WCS
+    trigger: >
+      WES sends 'tote onto takeaway' instruction to WCS via TCP/IP socket.
+      WCS places tote on takeaway conveyor and acks back to WES.
+    trigger_transport: TCP_socket  # WES↔WCS is ALWAYS TCP sockets per §1.3
+    ims_check_first: false
+    ims_halt_possible: true
+    ims_halt_note: "IMS can halt at WCS layer"
+    candidate_blockers:
+      - class: socket_failure
+        detail: "WES→WCS TCP socket dropped, half-open, or connection refused"
+        grounding: "[INFERRED from §1.3 — WES↔WCS always TCP]"
+        check_order: 1
+      - class: service_down
+        detail: "WCS service not running or not processing socket messages"
+        grounding: "[INFERRED]"
+        check_order: 2
+      - class: lost_ack
+        detail: "WCS placed tote on conveyor but ack back to WES was lost; WES still thinks it's in 'picked'"
+        grounding: "[INFERRED from §1.3]"
+        check_order: 3
+      - class: ims_hold
+        detail: "IMS hold at WCS layer preventing conveyor placement"
+        grounding: "[INFERRED from §1.4]"
+        check_order: 4
+      - class: physical_issue
+        detail: "Tote physically not at the expected station (human moved it)"
+        grounding: "[INFERRED]"
+        check_order: 5
+    dependency_edges:
+      - entity: tote
+        state_required: picking_complete
+        description: "Tote must be fully picked and closed before going to conveyor"
+        grounding: "[INFERRED]"
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      WES↔WCS is always TCP socket — check the socket health first.
+      Distinguish: is WCS not receiving the instruction (socket down) vs.
+      WCS received but ack back to WES was lost?
+
+  - id: on_takeaway_to_sorted
+    from: on_takeaway
+    to: sorted
+    owning_domain: WCS
+    trigger: >
+      WCS routes tote along takeaway conveyor through the sorter/diverter to
+      the correct chute. WCS sends divert command to sorter hardware.
+    trigger_transport: TCP_socket
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: hardware_fault
+        detail: >
+          Sorter/diverter hardware fault (E-stop, sensor fault, jam, mechanical issue).
+          If physical mechanics are the cause → escalate to field engineer.
+          Check WCS logs for E-stop events or sensor fault codes.
+        grounding: "[INFERRED]"
+        check_order: 1
+      - class: socket_failure
+        detail: "WCS lost TCP connection to sorter/diverter controller"
+        grounding: "[INFERRED]"
+        check_order: 2
+      - class: capacity
+        detail: "Sorter backed up or chute full — tote queued on conveyor"
+        grounding: "[INFERRED]"
+        check_order: 3
+      - class: identification_failure
+        detail: "Tote scan failed at sorter — WCS can't identify which chute to divert to"
+        grounding: "[INFERRED]"
+        check_order: 4
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      Hardware vs. software discrimination is critical here.
+      E-stop / sensor fault / mechanical jam → field engineer.
+      WCS service issue / socket to controller → WCS subagent.
+      WCS subagent should escalate to infra if VM/hypervisor shows signs of failure.
+
+  - id: sorted_to_packed
+    from: sorted
+    to: packed
+    owning_domain: WCS
+    trigger: >
+      WCS sends 'route to packing' instruction to conveyor/divert hardware after
+      sortation; tote arrives at packing station; operator packs items.
+    trigger_transport: TCP_socket
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: routing_error
+        detail: "WCS sent tote to wrong chute or wrong packing station"
+        grounding: "[INFERRED]"
+      - class: station_unavailable
+        detail: "Packing station down or unstaffed"
+        grounding: "[INFERRED]"
+      - class: hardware_fault
+        detail: "Conveyor between sorter and packing station stopped"
+        grounding: "[INFERRED]"
+      - class: human_delay
+        detail: "Operator at packing station not completing packing"
+        grounding: "[INFERRED]"
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: ""
+
+  - id: packed_to_labeled
+    from: packed
+    to: labeled
+    owning_domain: WCS
+    trigger: >
+      WCS sends 'route to labeling' instruction; print-and-apply labeling station
+      prints label and applies it; station acks completion to WCS.
+    trigger_transport: TCP_socket  # [INFERRED — may be REST or proprietary to printer]
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: hardware_fault
+        detail: "Print-and-apply printer offline, jammed, or out of labels/ribbon"
+        grounding: "[INFERRED]"
+        check_order: 1
+      - class: connectivity
+        detail: "WCS cannot reach the labeling station (network or socket issue)"
+        grounding: "[INFERRED]"
+        check_order: 2
+      - class: data_missing
+        detail: "Label data not available (missing order details needed for label generation)"
+        grounding: "[INFERRED]"
+        check_order: 3
+      - class: hardware_fault
+        detail: "Print-and-apply arm mechanical failure — field engineer if physical"
+        grounding: "[INFERRED]"
+        check_order: 4
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      Labeling printer hardware issues are common and often field-engineer territory.
+      Check printer connectivity and media status before diagnosing WCS.
+
+  - id: labeled_to_loaded
+    from: labeled
+    to: loaded
+    owning_domain: WCS
+    trigger: >
+      WCS routes labeled package to outbound conveyor lane via 'route to outbound'
+      instruction.
+    trigger_transport: TCP_socket
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: capacity
+        detail: "Outbound conveyor lane backed up or full"
+        grounding: "[INFERRED]"
+      - class: routing_error
+        detail: "WCS routing error — package sent to wrong outbound lane"
+        grounding: "[INFERRED]"
+      - class: hardware_fault
+        detail: "Outbound conveyor stopped"
+        grounding: "[INFERRED]"
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: ""
+
+  - id: loaded_to_shipped
+    from: loaded
+    to: shipped
+    owning_domain: WCS
+    trigger: >
+      Package scanned at dock door / loaded on truck; WCS or outbound scan system
+      records ship event.
+    trigger_transport: n/a  # dock scan / manual trigger
+    ims_check_first: false
+    ims_halt_possible: false
+    candidate_blockers:
+      - class: external
+        detail: "Truck delay, carrier issue, or dock door not assigned"
+        grounding: "[INFERRED]"
+      - class: data_missing
+        detail: "Dock scan not recorded — system didn't register the ship event"
+        grounding: "[INFERRED]"
+      - class: hardware_fault
+        detail: "Dock door mechanical issue"
+        grounding: "[INFERRED]"
+    dependency_edges: []
+    grounding: "[INFERRED]"
+    diagnostic_note: >
+      This transition is mostly logistics/carrier and rarely a software incident.
+      If an order stays 'loaded' indefinitely, check whether the dock scan was captured.
+
+
+# ─── BLOCKER CLASSES ─────────────────────────────────────────────────────────
+# Shared taxonomy across all transitions. Keeps blocker detail strings concise.
+blocker_classes:
+  stuck_queue:
+    description: "ActiveMQ queue has messages but no active consumer is draining it"
+    transport: ActiveMQ
+  consumer_down:
+    description: "Downstream service is not consuming messages from its queue channel"
+    transport: ActiveMQ
+  lost_ack:
+    description: >
+      Downstream completed its work but the ack back to WES was dropped in transit.
+      WES stays stuck waiting; downstream has already moved on.
+      Classic maddening failure — see §1.3.
+  ims_hold:
+    description: >
+      IMS deliberately halted fulfillment due to a cycle-count discrepancy.
+      This is CORRECT behavior, not a bug. Do not chase a software root cause until
+      IMS hold is confirmed cleared. See §1.4.
+  service_down:
+    description: "Service process is not running or is unresponsive to health checks"
+  socket_failure:
+    description: >
+      TCP/IP socket between WES and WCS is dropped, half-open, timed out, or
+      connection refused. WES↔WCS is always TCP sockets per §1.3.
+  capacity:
+    description: "System is overloaded — queue saturated, no available slots, or throughput throttled"
+  hardware_fault:
+    description: >
+      Physical hardware fault (conveyor, sorter, diverter, printer, dock door).
+      If below the hypervisor → field engineer.
+      If VM/hypervisor/OS → infra subagent.
+      If Windows service or MS SQL → WCS subagent.
+  misconfiguration:
+    description: "Config or routing rule mismatch, often between base config and client overlay"
+  bad_input:
+    description: "Upstream system sent malformed or invalid data; check dead-letter queue"
+  bin_unavailable:
+    description: "Required bin is not in storage, is damaged, or was never placed during decant"
+  inventory_mismatch:
+    description: "Item count or location in IMS doesn't match physical reality at pick station"
+  identification_failure:
+    description: "Tote or package barcode/scan failed — system can't identify the entity"
+  external:
+    description: "Carrier, dock, or client-side issue outside the warehouse software stack"
+  physical_issue:
+    description: "Physical placement doesn't match system state (human moved entity without scanning)"
+  routing_error:
+    description: "WCS routed entity to wrong station, chute, or lane"
+  connectivity:
+    description: "Network or API connectivity issue to a peripheral system (printer, station controller)"
+  human_delay:
+    description: "Awaiting operator action — not a software fault; check staffing before escalating"
+  data_missing:
+    description: "Required data not available for the operation (e.g., label data, order details)"
+  station_unavailable:
+    description: "Target station is not operational (powered down, in error mode, or unmanned)"
+  storage_unavailable:
+    description: "ASRS (Automated Storage and Retrieval System) not responding to bin retrieval requests"
