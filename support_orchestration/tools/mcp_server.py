@@ -43,6 +43,15 @@ class VectorStoreAdapter(ABC):
     async def search(self, query: str, top_k: int, filters: dict[str, Any]) -> list[dict[str, Any]]:
         ...
 
+    @abstractmethod
+    async def write(self, record: dict[str, Any]) -> None:
+        """Upsert a resolved incident into the vector store.
+
+        record keys: jira_id, client_id, entity_type, domain,
+                     summary, root_cause, fix_summary
+        """
+        ...
+
 
 class PhoenixAdapter(ABC):
     @abstractmethod
@@ -85,9 +94,13 @@ class StubLogAdapter(LogAdapter):
 class StubVectorAdapter(VectorStoreAdapter):
     def __init__(self, fixture: list[dict[str, Any]] | None = None) -> None:
         self._fixture = fixture or []
+        self.written: list[dict[str, Any]] = []
 
     async def search(self, query: str, top_k: int, filters: dict[str, Any]) -> list[dict[str, Any]]:
         return self._fixture
+
+    async def write(self, record: dict[str, Any]) -> None:
+        self.written.append(record)
 
 
 class StubPhoenixAdapter(PhoenixAdapter):

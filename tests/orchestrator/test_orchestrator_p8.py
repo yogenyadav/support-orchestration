@@ -161,3 +161,65 @@ async def test_orchestrator_accepts_jira_client_kwarg():
     jira = StubJiraClient()
     orch = Orchestrator(case, jira_client=jira)
     assert orch._jira_client is jira
+
+
+# ── _formulate_memory tests ───────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_formulate_memory_without_anthropic_returns_raw():
+    """Without an API client, _formulate_memory returns the raw diagnosis_summary."""
+    case = _make_case()
+    orch, _ = _make_orchestrator(case)
+    result = await orch._formulate_memory("WES queue full", "Restart consumer")
+    assert result == "WES queue full"
+
+
+@pytest.mark.asyncio
+async def test_formulate_memory_with_anthropic_calls_haiku():
+    """With API client, _formulate_memory calls claude-haiku-4-5 and returns its output."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    formatted = (
+        "**Context**: Order stuck at prioritized in WES.\n"
+        "**Root Cause**: Consumer ack dropped.\n"
+        "**Resolution**: Restarted consumer and re-emitted release.\n"
+        "**Watch Out For**: Repeat during high-throughput periods."
+    )
+    mock_resp = MagicMock()
+    mock_resp.content = [MagicMock(text=formatted)]
+
+    mock_anthropic = AsyncMock()
+    mock_anthropic.messages.create = AsyncMock(return_value=mock_resp)
+
+    case = _make_case()
+    orch = Orchestrator(case, anthropic_client=mock_anthropic)
+
+    result = await orch._formulate_memory("Consumer ack lost", "Restart WES")
+
+    assert result == formatted
+    call_kwargs = mock_anthropic.messages.create.call_args.kwargs
+    assert call_kwargs["model"] == "claude-haiku-4-5"
+    assert call_kwargs["max_tokens"] == 200
+
+
+@pytest.mark.asyncio
+async def test_write_resolution_passes_formulated_summary_to_vector():
+    """_write_resolution calls _formulate_memory and writes its result as summary."""
+    from unittest.mock import AsyncMock, patch
+
+    from support_orchestration.tools.mcp_server import StubVectorAdapter
+
+    case = _make_case()
+    vec = StubVectorAdapter()
+    orch, _ = _make_orchestrator(case, replies=["ok", "approved"])
+    orch._vector = vec
+
+    expected_summary = "**Context**: Order stuck.\n**Root Cause**: Queue full."
+    with patch.object(
+        orch, "_formulate_memory", AsyncMock(return_value=expected_summary)
+    ) as mock_fm:
+        await orch.run()
+
+    mock_fm.assert_called_once()
+    assert len(vec.written) == 1
+    assert vec.written[0]["summary"] == expected_summary

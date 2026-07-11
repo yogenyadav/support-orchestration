@@ -77,6 +77,8 @@ Three durable stores, all owned by the support system (no client production data
 - `pgvector` combines state + audit + vector into one Postgres engine for the prototype.
 - Client production data is **never stored** — read live, reasoned over in-flight, discarded.
 - Audit data is long-lived (compliance); Case objects age out after resolution; vector corpus grows continuously.
+- **Agentic RAG write-back:** on every resolution, `Orchestrator._write_resolution()` calls `VectorStoreAdapter.write()` after the Jira write. Non-fatal — vector failure logs a warning but never aborts resolution. Jira is still the system of record.
+- **Vector store schema:** HNSW index `WITH (m=16, ef_construction=64)` on the embedding column; `UNIQUE(jira_id)` constraint for idempotent upsert (re-resolving the same ticket overwrites the row, not duplicates). When `embed_fn=None`, write stores NULL and search falls back to ILIKE.
 
 ## Skills (see docs/4 §4.9)
 
@@ -114,6 +116,7 @@ The Agent SDK is the harness. Anything that must be true **every time** — no w
 | 5. Teams bot + MCP adapters + Jira write | ✅ DONE | Prompt 8. `glue/bot.py` — `BotFrameworkTransport` (Azure Bot REST API, asyncio.Queue, token cache). `tools/adapters/` — 5 production adapters: `OracleDbAdapter`, `PostgresDbAdapter`, `MsSqlDbAdapter`, `PgvectorStoreAdapter`, `SshLogAdapter`, `HttpPhoenixAdapter`, `GithubApiAdapter`. `glue/jira.write_resolution()` implemented + wired into orchestrator `_write_resolution()`. 218 tests. |
 | 6. Additional domain subagents | ✅ DONE | Prompt 9. All 8 remaining domain subagents fully built (WES pattern): rich `{DOMAIN}_DOMAIN_CONTEXT` + builder functions in `subagents/prompts.py`; `system_prompt` properties updated in `subagents/base.py`; 14 new eval fixtures (18 total, 100% triage accuracy). |
 | 7. `mocked_tool_responses` + diagnosis eval | ✅ DONE | Prompt 10. `mocked_tool_responses` added to all 18 fixtures (phoenix_resolve, db_state_read, history_search, log_read). Fixed `FixtureDbAdapter.query()` bug. Added `--diagnose` CLI flag. Run: `ANTHROPIC_API_KEY=... python -m evals --diagnose`. 218 tests pass. |
+| 8. Agentic RAG write-back | ✅ DONE | Post-P10 (2026-07-11). `VectorStoreAdapter.write()` (upsert on `UNIQUE(jira_id)`, HNSW index `m=16/ef=64`). `Orchestrator._formulate_memory()` (Haiku C9 — structured 4-line block: **Context / Root Cause / Resolution / Watch Out For**). Write-back triggered on every resolution; non-fatal. `vector_adapter` kwarg on `Orchestrator.__init__`. 225 tests. |
 
 ## Eval harness — what's running
 

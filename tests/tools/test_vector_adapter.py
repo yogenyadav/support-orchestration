@@ -140,3 +140,129 @@ async def test_search_no_filters():
 
     results = await adapter.search("anything", top_k=5, filters={})
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_write_without_embed_fn_stores_null_embedding():
+    """write() with no embed_fn inserts a row with NULL embedding."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+    mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+    mock_pool = AsyncMock()
+    mock_pool.acquire = MagicMock(return_value=mock_conn)
+
+    from support_orchestration.tools.adapters.vector_adapter import PgvectorStoreAdapter
+    adapter = PgvectorStoreAdapter("postgresql://localhost/test")
+    adapter._pool = mock_pool
+
+    await adapter.write({
+        "jira_id": "WH-999",
+        "client_id": "acme",
+        "entity_type": "order",
+        "domain": "WES",
+        "summary": "Order stuck at prioritized",
+        "root_cause": "WES service queue full",
+        "fix_summary": "Restart WES service",
+    })
+
+    mock_conn.execute.assert_called_once()
+    sql, *args = mock_conn.execute.call_args[0]
+    assert "ON CONFLICT" in sql
+    assert "WH-999" in args
+    assert args[-1] is None  # embedding is NULL without embed_fn
+
+
+@pytest.mark.asyncio
+async def test_write_with_embed_fn_generates_embedding():
+    """write() calls embed_fn on concatenated text and stores the vector."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embedded_texts: list[str] = []
+
+    async def mock_embed(text: str) -> list[float]:
+        embedded_texts.append(text)
+        return [0.5] * 1536
+
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+    mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+    mock_pool = AsyncMock()
+    mock_pool.acquire = MagicMock(return_value=mock_conn)
+
+    from support_orchestration.tools.adapters.vector_adapter import PgvectorStoreAdapter
+    adapter = PgvectorStoreAdapter("postgresql://localhost/test", embed_fn=mock_embed)
+    adapter._pool = mock_pool
+
+    await adapter.write({
+        "jira_id": "WH-1001",
+        "client_id": "beta",
+        "entity_type": "order",
+        "domain": "WES",
+        "summary": "Order stuck",
+        "root_cause": "DB timeout",
+        "fix_summary": "Reset connection pool",
+    })
+
+    assert len(embedded_texts) == 1
+    assert "Order stuck" in embedded_texts[0]
+    assert "DB timeout" in embedded_texts[0]
+    sql, *args = mock_conn.execute.call_args[0]
+    assert args[-1] == [0.5] * 1536  # embedding stored
+
+
+@pytest.mark.asyncio
+async def test_write_skips_embed_when_no_text():
+    """write() with all-None text fields skips embed_fn and stores NULL."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed_call_count = 0
+
+    async def mock_embed(text: str) -> list[float]:
+        nonlocal embed_call_count
+        embed_call_count += 1
+        return [0.1] * 1536
+
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+    mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+    mock_pool = AsyncMock()
+    mock_pool.acquire = MagicMock(return_value=mock_conn)
+
+    from support_orchestration.tools.adapters.vector_adapter import PgvectorStoreAdapter
+    adapter = PgvectorStoreAdapter("postgresql://localhost/test", embed_fn=mock_embed)
+    adapter._pool = mock_pool
+
+    await adapter.write({
+        "jira_id": "WH-0",
+        "client_id": "x",
+        "entity_type": None,
+        "domain": None,
+        "summary": None,
+        "root_cause": None,
+        "fix_summary": None,
+    })
+
+    assert embed_call_count == 0
+    sql, *args = mock_conn.execute.call_args[0]
+    assert args[-1] is None
+
+
+@pytest.mark.asyncio
+async def test_stub_vector_adapter_write_records_calls():
+    """StubVectorAdapter.write() appends to .written for test assertions."""
+    from support_orchestration.tools.mcp_server import StubVectorAdapter
+
+    adapter = StubVectorAdapter()
+    record = {"jira_id": "WH-42", "client_id": "demo", "domain": "WES"}
+    await adapter.write(record)
+
+    assert len(adapter.written) == 1
+    assert adapter.written[0]["jira_id"] == "WH-42"

@@ -20,8 +20,9 @@ Expected table schema (create once at provisioning time):
         created_at    TIMESTAMPTZ DEFAULT NOW()
     );
 
-    CREATE INDEX ON incident_embeddings USING ivfflat (embedding vector_cosine_ops)
-        WITH (lists = 100);
+    ALTER TABLE incident_embeddings ADD CONSTRAINT incident_embeddings_jira_id_key UNIQUE (jira_id);
+    CREATE INDEX ON incident_embeddings USING hnsw (embedding vector_cosine_ops)
+        WITH (m = 16, ef_construction = 64);
     CREATE INDEX ON incident_embeddings (client_id);
 
 Install: pip install asyncpg pgvector
@@ -150,6 +151,47 @@ class PgvectorStoreAdapter(VectorStoreAdapter):
         """
         rows = await conn.fetch(sql, *args, like_query, top_k)
         return [dict(r) for r in rows]
+
+    async def write(self, record: dict[str, Any]) -> None:
+        """Upsert a resolved incident into the vector store.
+
+        Embeds summary + root_cause + fix_summary (if embed_fn provided) and
+        upserts on jira_id, so re-resolving the same ticket overwrites the row.
+        """
+        pool = await self._get_pool()
+
+        embedding: list[float] | None = None
+        if self._embed_fn is not None:
+            text = " ".join(filter(None, [
+                record.get("summary"),
+                record.get("root_cause"),
+                record.get("fix_summary"),
+            ]))
+            if text:
+                embedding = await self._embed_fn(text)
+
+        sql = f"""
+            INSERT INTO {self._table}
+                (jira_id, client_id, entity_type, domain, summary, root_cause, fix_summary, embedding)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (jira_id) DO UPDATE SET
+                root_cause  = EXCLUDED.root_cause,
+                fix_summary = EXCLUDED.fix_summary,
+                embedding   = EXCLUDED.embedding,
+                created_at  = NOW()
+        """
+        async with pool.acquire() as conn:
+            await conn.execute(
+                sql,
+                record.get("jira_id"),
+                record.get("client_id"),
+                record.get("entity_type"),
+                record.get("domain"),
+                record.get("summary"),
+                record.get("root_cause"),
+                record.get("fix_summary"),
+                embedding,
+            )
 
     async def close(self) -> None:
         if self._pool is not None:

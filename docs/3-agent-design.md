@@ -83,7 +83,7 @@ flowchart LR
 
 For each transition the map stores: **owner, trigger, blockers, IMS-halt flag, dependency edges**. Example — `prioritized → released` is **WES**-owned; trigger = WES emits release; blockers = WES backed up / message stuck in ActiveMQ / picking-engine didn't ack / **IMS hold**. Find an order stuck in `prioritized` → the map hands you the domain *and* a ready blocker checklist.
 
-> Built from **code** base+client (transitions/triggers), **Jira history** (real blockers), and Confluence docs. The map encodes **logical** states and transitions — it does not embed physical DB schema details (table names, column names, state string values), because those vary per client and are discovered at runtime. Every resolved incident enriches the blocker-lists and the map compounds over time.
+> Built from **code** base+client (transitions/triggers), **Jira history** (real blockers), and Confluence docs. The map encodes **logical** states and transitions — it does not embed physical DB schema details (table names, column names, state string values), because those vary per client and are discovered at runtime. Every resolved incident enriches the blocker-lists and the map compounds over time. **Agentic RAG write-back** (implemented): on every resolution, the orchestrator also writes a structured memory record to pgvector (`VectorStoreAdapter.write()`), so the history-match engine improves without manual curation.
 
 ---
 
@@ -252,6 +252,9 @@ sequenceDiagram
     Note over E: HUMAN applies the fix in production
     E-->>O: applied & verified
     O->>J: write root cause + resolution (enriches history)
+    Note over O: Also writes to pgvector (Agentic RAG write-back)<br/>so future history-match improves automatically
 ```
 
 **Two human gates:** a light **validation** of the conclusion, and a hard **approval** of the recommended fix — with the human **always applying** it.
+
+**Agentic RAG write-back:** after the Jira resolution write, the orchestrator calls `_formulate_memory()` (C9, Haiku) to produce a structured four-line block (`**Context / Root Cause / Resolution / Watch Out For**`) and upserts it into pgvector. Non-fatal — vector failure never blocks or reverts the resolution. The corpus grows continuously and the history-match signal compounds with every resolved incident.

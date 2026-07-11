@@ -23,7 +23,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any, Callable
 
-from support_orchestration.config.base import MODEL_SONNET
+from support_orchestration.config.base import MODEL_HAIKU, MODEL_SONNET
 from support_orchestration.glue.jira import JiraClient
 from support_orchestration.glue.teams import DialectManager, StubTransport, c6_interpret_reply
 from support_orchestration.models import Case, CaseStatus, Diagnosis
@@ -31,6 +31,7 @@ from support_orchestration.models.diagnosis import NextAction
 from support_orchestration.orchestrator.prompts import render_case_for_triage, render_warm_start_dossier
 from support_orchestration.orchestrator.triage import TriageDecision, run_triage
 from support_orchestration.subagents.base import BaseSubagent, get_subagent
+from support_orchestration.tools.mcp_server import VectorStoreAdapter
 
 if TYPE_CHECKING:
     pass
@@ -39,8 +40,18 @@ logger = logging.getLogger(__name__)
 
 # Model routing per docs/4 §4.2
 MODEL_TRIAGE = MODEL_SONNET   # C3, C8
+MODEL_MEMORY = MODEL_HAIKU    # memory formulation before pgvector write
 
 MAX_REROUTES = 3              # hard cap on domain re-routing before forced escalation
+
+_MEMORY_SYSTEM = (
+    "You write concise knowledge-base memory records for warehouse support incidents. "
+    "Output exactly four labelled lines, nothing else:\n"
+    "**Context**: <one sentence — what was stuck and in which system>\n"
+    "**Root Cause**: <one sentence — why it got stuck>\n"
+    "**Resolution**: <one sentence — what fixed it>\n"
+    "**Watch Out For**: <one warning for future similar incidents>"
+)
 
 
 class Orchestrator:
@@ -54,12 +65,14 @@ class Orchestrator:
         anthropic_client: Any | None = None,   # anthropic.AsyncAnthropic
         state_store: Any | None = None,         # CaseStore
         jira_client: JiraClient | None = None,  # injected for write_resolution
+        vector_adapter: VectorStoreAdapter | None = None,  # write-back on resolution
         subagent_factory: Callable[[str, Case], BaseSubagent] | None = None,
     ) -> None:
         self.case = case
         self._anthropic = anthropic_client
         self._store = state_store
         self._jira_client = jira_client
+        self._vector = vector_adapter
 
         # Build a dialect with stub transport if none injected (test/offline mode)
         if dialect is None:
@@ -238,6 +251,25 @@ class Orchestrator:
                 jira_client=self._jira_client,
             )
 
+        if self._vector is not None:
+            try:
+                memory_summary = await self._formulate_memory(diagnosis_summary, fix_summary)
+                await self._vector.write({
+                    "jira_id":     self.case.jira_ticket_id,
+                    "client_id":   self.case.client,
+                    "entity_type": self.case.entity_type,
+                    "domain":      self.case.owning_domain,
+                    "summary":     memory_summary,
+                    "root_cause":  self.case.resolution_summary,
+                    "fix_summary": fix_summary,
+                })
+            except Exception:
+                logger.warning(
+                    "Vector write-back failed for %s (non-fatal)",
+                    self.case.jira_ticket_id,
+                    exc_info=True,
+                )
+
         logger.info(
             "RESOLUTION for %s: %s",
             self.case.jira_ticket_id,
@@ -306,6 +338,35 @@ class Orchestrator:
         await self._dialect.send_info(msg)
         self._persist()
         logger.warning("ESCALATED %s: %s", self.case.jira_ticket_id, reason)
+
+    # ── Memory formulation (Haiku) ────────────────────────────────────────────
+
+    async def _formulate_memory(self, diagnosis_summary: str, fix_summary: str) -> str:
+        """Haiku-formulated memory record for pgvector write-back.
+
+        Produces a structured four-line Markdown block that embeds better than
+        raw diagnosis text. Falls back to raw diagnosis_summary when no API client.
+        """
+        if self._anthropic is None:
+            return diagnosis_summary
+
+        user_content = (
+            f"Domain: {self.case.owning_domain}\n"
+            f"Entity: {self.case.entity_type} {self.case.entity_id}\n"
+            f"Diagnosis: {diagnosis_summary}\n"
+            f"Fix applied: {fix_summary}"
+        )
+        try:
+            resp = await self._anthropic.messages.create(
+                model=MODEL_MEMORY,
+                max_tokens=200,
+                system=_MEMORY_SYSTEM,
+                messages=[{"role": "user", "content": user_content}],
+            )
+            return resp.content[0].text if resp.content else diagnosis_summary
+        except Exception as e:
+            logger.warning("Memory formulation failed for %s: %s", self.case.jira_ticket_id, e)
+            return diagnosis_summary
 
     # ── C8 dossier (Sonnet) ───────────────────────────────────────────────────
 

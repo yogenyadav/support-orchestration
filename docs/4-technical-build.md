@@ -43,8 +43,9 @@ flowchart TD
 | C6 | Dialect turn (interpret reply, next question) | Messages | **Haiku 4.5** |
 | C7 | Background prep (build dossier, unassigned phase) | **Batch API** (50% off) | Haiku/Sonnet |
 | C8 | Warm-start dossier for engineer | Messages, JSON | **Sonnet 4.6** |
+| C9 | Memory formulation (resolved incident → structured embedding text) | Messages | **Haiku 4.5** |
 
-**Routing rule:** Haiku = classify/route/parse · Sonnet = diagnose/synthesize · Opus = novel diagnosis + final fix. Model strings: `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-8`.
+**Routing rule:** Haiku = classify/route/parse/memory · Sonnet = diagnose/synthesize · Opus = novel diagnosis + final fix. Model strings: `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-8`. `MODEL_MEMORY = MODEL_HAIKU` (module-level constant in `orchestrator.py`).
 
 **Model facts (verified):** Opus 4.8 `$5/$25` per MTok, 1M context, 128K max output · Sonnet 4.6 `$3/$15`, 1M context, 64K out · Haiku 4.5 `$1/$5`, 200K context, 64K out. Output = 5× input across all.
 
@@ -244,6 +245,8 @@ The system reads and recommends, but it has real state that must persist. None o
 - `pgvector` lets the state, audit, and vector needs share one Postgres engine for the prototype — fewer moving parts; split out later if scale demands.
 - The state store is the durability behind the "rehydrate from the Case object and `resume`" guarantee in the harness (§4.10) — they're two halves of the same crash-recovery story.
 - Retention: audit data is long-lived (compliance); Case objects can age out after resolution + a window; the vector corpus grows continuously as resolved incidents enrich it.
+- **Vector store schema (decided):** HNSW index (`CREATE INDEX ... USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)`) — recommended for 1536-dim embeddings (good recall, manageable memory). `UNIQUE(jira_id)` constraint for idempotent upsert; re-resolving the same ticket overwrites the row, not duplicates. IVFFlat is deprecated; use HNSW.
+- **Agentic RAG write-back:** on resolution, the orchestrator calls C9 (Haiku) to produce a structured four-line memory block (`**Context / Root Cause / Resolution / Watch Out For**`) then upserts it into pgvector via `VectorStoreAdapter.write()`. Non-fatal — vector failure logs a warning but never aborts the Jira resolution path. When `embed_fn=None`, embedding is NULL and `history_search` falls back to ILIKE.
 
 ---
 
@@ -482,6 +485,28 @@ ANTHROPIC_API_KEY=sk-ant-... .venv/bin/python3.12 -m evals --diagnose --domain W
 ```
 
 **State after Prompt 10 + post-P10 additions:** 218 unit tests pass · 18/18 triage fixtures pass (100%) · 18/18 adapter wiring validated (blocker_class verified 18/18) · logs written to `logs/evals.log` when `--verbose` · diagnosis eval awaiting live API-key run to validate LLM accuracy.
+
+---
+
+### As-built (Agentic RAG write-back — post-P10, 2026-07-11)
+
+**New / updated files:**
+
+| File | Status | What it does |
+|---|---|---|
+| `support_orchestration/tools/mcp_server.py` | updated | `VectorStoreAdapter` gained abstract `write(record: dict) -> None`. `StubVectorAdapter` gains `written: list[dict]` for test assertions. |
+| `support_orchestration/tools/adapters/vector_adapter.py` | updated | `PgvectorStoreAdapter.write()` — upserts on `UNIQUE(jira_id)` (`ON CONFLICT DO UPDATE`). Embeds `summary + root_cause + fix_summary` via `embed_fn` if provided; stores NULL otherwise. Index changed from IVFFlat → HNSW `WITH (m=16, ef_construction=64)`. |
+| `support_orchestration/orchestrator/orchestrator.py` | updated | `Orchestrator.__init__` accepts `vector_adapter: VectorStoreAdapter \| None`. `_write_resolution()` calls `_formulate_memory()` then `self._vector.write()` after the Jira write, wrapped in try/except (non-fatal). `_formulate_memory(diagnosis_summary, fix_summary) -> str` — async method, calls `claude-haiku-4-5` (`MODEL_MEMORY = MODEL_HAIKU`) with `_MEMORY_SYSTEM` prompt to produce a four-line Markdown block. Falls back to raw `diagnosis_summary` when `self._anthropic is None` or on exception. `_formulate_memory` is not called when `_vector is None` (no Haiku cost for cases without a vector adapter). |
+
+**Key design choices:**
+- **jira_id as upsert key**: Globally unique across Jira. Re-resolving the same ticket overwrites rather than duplicates.
+- **Non-fatal write-back**: Jira is the system of record. Vector failure is a degraded-mode issue, not an abort condition.
+- **Haiku for C9 (memory formulation)**: Cheap model for a structured, narrow task. 200 max_tokens. Consistent four-line format embeds better than raw prose — same structure every time → consistent retrieval.
+- **Fallback chain**: no API client → raw text; API error → raw text; embed_fn absent → NULL embedding → ILIKE fallback at search time.
+
+**Tests added (7 new, 225 total):**
+- `tests/orchestrator/test_orchestrator_p8.py` — 7 new tests: vector write called on resolution, vector failure non-fatal, `_formulate_memory` Haiku call, `_formulate_memory` fallback (no client), upsert key is `jira_id`, `vector_adapter` kwarg accepted, `StubVectorAdapter.written` list.
+- `tests/tools/test_vector_adapter.py` — updated: `write()` upsert, HNSW index DDL.
 
 ---
 
