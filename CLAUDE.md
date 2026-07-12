@@ -18,6 +18,7 @@ Full specs live in `docs/` (GitHub markdown + Mermaid diagrams):
 - `docs/2-support-process.md` — the support workflow, connectivity tiers, SLAs
 - `docs/3-agent-design.md` — orchestrator + subagents, guardrails, human interaction
 - `docs/4-technical-build.md` — language, model calls, context engineering, infra, CI/CD
+- `docs/vector-databases.md` — vector DB concepts, embedding model decision (Voyage AI voyage-3), HNSW, pgvector rationale, cost model, end-to-end flow
 
 When a task touches architecture, **consult these docs as the source of truth.** If something here conflicts with a doc, ask before diverging.
 
@@ -78,7 +79,8 @@ Three durable stores, all owned by the support system (no client production data
 - Client production data is **never stored** — read live, reasoned over in-flight, discarded.
 - Audit data is long-lived (compliance); Case objects age out after resolution; vector corpus grows continuously.
 - **Agentic RAG write-back:** on every resolution, `Orchestrator._write_resolution()` calls `VectorStoreAdapter.write()` after the Jira write. Non-fatal — vector failure logs a warning but never aborts resolution. Jira is still the system of record.
-- **Vector store schema:** HNSW index `WITH (m=16, ef_construction=64)` on the embedding column; `UNIQUE(jira_id)` constraint for idempotent upsert (re-resolving the same ticket overwrites the row, not duplicates). When `embed_fn=None`, write stores NULL and search falls back to ILIKE.
+- **Vector store schema:** HNSW index `WITH (m=16, ef_construction=64)` on the embedding column; schema column `vector(1024)`; `UNIQUE(jira_id)` constraint for idempotent upsert (re-resolving the same ticket overwrites the row, not duplicates). When `embed_fn=None`, write stores NULL and search falls back to ILIKE.
+- **Embedding model:** Voyage AI `voyage-3` (1024 dims, $0.06/1M tokens). Anthropic-recommended for Claude-based systems. `embed_fn` injected as async callable into `PgvectorStoreAdapter`. See `docs/vector-databases.md`.
 
 ## Skills (see docs/4 §4.9)
 

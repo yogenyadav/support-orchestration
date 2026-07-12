@@ -16,7 +16,7 @@ Expected table schema (create once at provisioning time):
         summary       TEXT,
         root_cause    TEXT,
         fix_summary   TEXT,
-        embedding     vector(1536),  -- dimension must match your embedding model
+        embedding     vector(1024),  -- voyage-3 output dimension (Voyage AI)
         created_at    TIMESTAMPTZ DEFAULT NOW()
     );
 
