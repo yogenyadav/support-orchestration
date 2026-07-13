@@ -86,9 +86,9 @@ async def test_atlassian_write_resolution_adds_comment():
     from unittest.mock import MagicMock
 
     jira_mock = MagicMock()
-    jira_mock.issue_get_transitions.return_value = {
-        "transitions": [{"id": "31", "name": "Resolve Issue"}]
-    }
+    jira_mock.get_issue_transitions.return_value = [
+        {"id": 31, "name": "Resolve Issue", "to": "Resolved"}
+    ]
     client = _make_atlassian_client(jira_mock)
 
     await client.write_resolution("WH-5", "root cause text", "fix applied text")
@@ -107,17 +107,15 @@ async def test_atlassian_write_resolution_transitions_ticket():
     from unittest.mock import MagicMock
 
     jira_mock = MagicMock()
-    jira_mock.issue_get_transitions.return_value = {
-        "transitions": [
-            {"id": "11", "name": "In Progress"},
-            {"id": "31", "name": "Resolve Issue"},
-        ]
-    }
+    jira_mock.get_issue_transitions.return_value = [
+        {"id": 11, "name": "In Progress", "to": "In Progress"},
+        {"id": 31, "name": "Resolve Issue", "to": "Resolved"},
+    ]
     client = _make_atlassian_client(jira_mock)
 
     await client.write_resolution("WH-5", "diag", "fix")
 
-    jira_mock.issue_transition.assert_called_once_with("WH-5", "31")
+    jira_mock.set_issue_status_by_transition_id.assert_called_once_with("WH-5", 31)
 
 
 @pytest.mark.asyncio
@@ -126,7 +124,7 @@ async def test_atlassian_write_resolution_continues_on_transition_failure():
     from unittest.mock import MagicMock
 
     jira_mock = MagicMock()
-    jira_mock.issue_get_transitions.side_effect = RuntimeError("Jira API down")
+    jira_mock.get_issue_transitions.side_effect = RuntimeError("Jira API down")
     client = _make_atlassian_client(jira_mock)
 
     # Should NOT raise — comment is written, transition failure is logged
@@ -140,14 +138,15 @@ async def test_atlassian_write_resolution_no_matching_transition():
     from unittest.mock import MagicMock
 
     jira_mock = MagicMock()
-    jira_mock.issue_get_transitions.return_value = {
-        "transitions": [{"id": "1", "name": "In Progress"}, {"id": "2", "name": "Backlog"}]
-    }
+    jira_mock.get_issue_transitions.return_value = [
+        {"id": 1, "name": "In Progress", "to": "In Progress"},
+        {"id": 2, "name": "Backlog", "to": "Backlog"},
+    ]
     client = _make_atlassian_client(jira_mock)
 
     await client.write_resolution("WH-5", "diag", "fix")
 
-    jira_mock.issue_transition.assert_not_called()
+    jira_mock.set_issue_status_by_transition_id.assert_not_called()
     jira_mock.issue_add_comment.assert_called_once()
 
 

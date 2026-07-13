@@ -736,7 +736,7 @@ def build_infra_system_prompt(case_client: str) -> str:
     return f"{C4_SYSTEM_BASE}\n\n{INFRA_DOMAIN_CONTEXT}\n\nClient for this incident: {case_client}"
 
 
-def render_case_for_diagnosis(case: "Case") -> str:
+def render_case_for_diagnosis(case: Case) -> str:
     """Format the Case object into a diagnosis user-turn message."""
     sla_rem = case.sla_seconds_remaining()
     if sla_rem <= 0:
@@ -783,7 +783,7 @@ _DIAGNOSIS_TAG_RE = re.compile(
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
-def parse_diagnosis_json(text: str, case: "Case") -> "Diagnosis | None":
+def parse_diagnosis_json(text: str, case: Case) -> Diagnosis | None:
     """
     Extract and validate a Diagnosis from model output.
 
@@ -813,7 +813,7 @@ def parse_diagnosis_json(text: str, case: "Case") -> "Diagnosis | None":
         return None
 
 
-def bounded_give_up(case: "Case", domain: str) -> "Diagnosis":
+def bounded_give_up(case: Case, domain: str) -> Diagnosis:
     """Return an escalate Diagnosis when the agent exhausts its turn budget."""
     from support_orchestration.models.diagnosis import Diagnosis, NextAction
 

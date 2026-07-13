@@ -1,10 +1,11 @@
 """Tests for Teams dialect — one-open-request enforcement, verb validation."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from support_orchestration.glue.teams import DialectManager, StubTransport
 from support_orchestration.models import Case, Priority
-from datetime import datetime, timedelta, timezone
 
 
 def _make_case() -> Case:

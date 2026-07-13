@@ -14,14 +14,6 @@ from typing import Any
 from support_orchestration.tools.adapters.github_adapter import GithubApiAdapter
 from support_orchestration.tools.adapters.phoenix_adapter import HttpPhoenixAdapter
 from support_orchestration.tools.adapters.vector_adapter import PgvectorStoreAdapter
-from support_orchestration.tools.mcp_server import (
-    GithubAdapter,
-    PhoenixAdapter,
-    StubDbAdapter,
-    StubLogAdapter,
-    StubVectorAdapter,
-    VectorStoreAdapter,
-)
 
 logger = logging.getLogger(__name__)
 

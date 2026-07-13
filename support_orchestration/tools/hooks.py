@@ -11,7 +11,11 @@ These are the load-bearing safety layer. Prompts guide; hooks enforce.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import re
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from support_orchestration.storage.audit import AuditStore
 
 logger = logging.getLogger(__name__)
 
@@ -25,21 +29,27 @@ ALLOWED_TOOLS: frozenset[str] = frozenset({
     "mcp__support__phoenix_resolve",
 })
 
-# Any tool name containing these substrings is a write and must never be called.
-_WRITE_INDICATORS = ("write", "update", "delete", "insert", "create", "mutate", "patch", "post")
+# Any tool name containing one of these tokens is a write and must never be called.
+# Matched on _-separated tokens (not substrings) so e.g. "postgres_read" is not
+# mistaken for a "post". Plural forms included.
+_WRITE_INDICATORS = frozenset({
+    "write", "writes", "update", "updates", "delete", "deletes", "insert", "inserts",
+    "create", "creates", "mutate", "mutates", "patch", "post", "put", "set", "upsert",
+    "remove", "drop", "truncate", "alter", "exec", "execute",
+})
 
 
-def block_writes(tool_name: str, tool_input: dict) -> None:  # type: ignore[type-arg]
+def block_writes(tool_name: str, tool_input: dict[str, Any]) -> None:
     """PreToolUse: raise immediately if the tool name suggests a write operation."""
-    lower = tool_name.lower()
-    if any(w in lower for w in _WRITE_INDICATORS):
+    tokens = re.split(r"[^a-z0-9]+", tool_name.lower())
+    if any(t in _WRITE_INDICATORS for t in tokens):
         raise PermissionError(
             f"GUARDRAIL: write tool '{tool_name}' is not permitted. "
             "No write tool exists in this system. Agents read, reason, and recommend; humans act."
         )
 
 
-def enforce_client_scope(tool_name: str, tool_input: dict, case_client: str) -> None:  # type: ignore[type-arg]
+def enforce_client_scope(tool_name: str, tool_input: dict[str, Any], case_client: str) -> None:
     """PreToolUse: ensure every tool call is scoped to the current case's client."""
     call_client = tool_input.get("client_id") or tool_input.get("client")
     if call_client is None:
@@ -74,12 +84,12 @@ def enforce_turn_cap(current_turn: int, max_turns: int) -> None:
 
 def audit_read(
     tool_name: str,
-    tool_input: dict,  # type: ignore[type-arg]
+    tool_input: dict[str, Any],
     tool_output: object,
     case_id: str,
     case_client: str,
     *,
-    audit_store: object = None,
+    audit_store: AuditStore | None = None,
 ) -> None:
     """PostToolUse: log every read to the audit store (what / when / client / credential).
 
@@ -90,7 +100,7 @@ def audit_read(
     input_keys = list(tool_input.keys())
     output_size = len(str(tool_output))
     if audit_store is not None:
-        audit_store.append_read(  # type: ignore[union-attr]
+        audit_store.append_read(
             case_id=case_id,
             client=case_client,
             tool_name=tool_name,

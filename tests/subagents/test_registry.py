@@ -1,15 +1,16 @@
 """Tests for subagent registry — domain map and factory function."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
+from support_orchestration.models import Case, Priority
 from support_orchestration.subagents.base import (
     DOMAIN_PRIORITY_ORDER,
     DOMAIN_SUBAGENT_MAP,
     WESSubagent,
     get_subagent,
 )
-from support_orchestration.models import Case, Priority
-from datetime import datetime, timedelta, timezone
 
 
 def _make_case(domain: str) -> Case:
@@ -47,7 +48,7 @@ def test_get_subagent_returns_wes() -> None:
 def test_get_subagent_all_domains() -> None:
     for domain in DOMAIN_SUBAGENT_MAP:
         agent = get_subagent(domain, _make_case(domain))
-        assert agent.DOMAIN == domain
+        assert domain == agent.DOMAIN
 
 
 def test_get_subagent_unknown_raises() -> None:

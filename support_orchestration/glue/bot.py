@@ -30,7 +30,7 @@ from typing import Any
 try:
     import aiohttp
 except ImportError:
-    aiohttp = None  # type: ignore[assignment]
+    aiohttp = None  # type: ignore[assignment,unused-ignore]
 
 from support_orchestration.glue.teams import TeamsTransport
 
@@ -106,10 +106,13 @@ class BotFrameworkTransport(TeamsTransport):
             "scope": _BOT_SCOPE,
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(token_url, data=payload, timeout=aiohttp.ClientTimeout(total=_DEFAULT_TIMEOUT)) as resp:
-                resp.raise_for_status()
-                data: dict[str, Any] = await resp.json()
+        timeout = aiohttp.ClientTimeout(total=_DEFAULT_TIMEOUT)
+        async with (
+            aiohttp.ClientSession() as session,
+            session.post(token_url, data=payload, timeout=timeout) as resp,
+        ):
+            resp.raise_for_status()
+            data: dict[str, Any] = await resp.json()
 
         self._token = data["access_token"]
         self._token_expires_at = time.monotonic() + data.get("expires_in", 3600)
@@ -143,19 +146,20 @@ class BotFrameworkTransport(TeamsTransport):
         }
 
         self._require_aiohttp()
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                headers=self._auth_headers(token),
-                json=body,
-                timeout=aiohttp.ClientTimeout(total=_DEFAULT_TIMEOUT),
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
+        async with aiohttp.ClientSession() as session, session.post(
+            url,
+            headers=self._auth_headers(token),
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=_DEFAULT_TIMEOUT),
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
 
         conversation_id = data["id"]
         ref = {"service_url": self._service_url, "conversation_id": conversation_id}
-        logger.info("BOT_DM_OPENED conversation_id=%s teams_user=%s", conversation_id, teams_user_id)
+        logger.info(
+            "BOT_DM_OPENED conversation_id=%s teams_user=%s", conversation_id, teams_user_id
+        )
         return json.dumps(ref)
 
     # ── TeamsTransport ABC ────────────────────────────────────────────────────
@@ -176,14 +180,13 @@ class BotFrameworkTransport(TeamsTransport):
         }
 
         self._require_aiohttp()
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                headers=self._auth_headers(token),
-                json=body,
-                timeout=aiohttp.ClientTimeout(total=_DEFAULT_TIMEOUT),
-            ) as resp:
-                resp.raise_for_status()
+        async with aiohttp.ClientSession() as session, session.post(
+            url,
+            headers=self._auth_headers(token),
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=_DEFAULT_TIMEOUT),
+        ) as resp:
+            resp.raise_for_status()
 
         logger.info(
             "BOT_SEND conversation_id=%s len=%d", conversation_id, len(message),
@@ -215,7 +218,7 @@ class BotFrameworkTransport(TeamsTransport):
             raise TimeoutError(
                 f"No reply from engineer in conversation {conversation_id} "
                 f"after {timeout_seconds:.0f}s"
-            )
+            ) from None
 
         logger.info(
             "BOT_RECV conversation_id=%s len=%d", conversation_id, len(reply),

@@ -135,7 +135,9 @@ async def test_receive_message_timeout():
 async def test_on_activity_delivers_to_queue():
     transport = _make_transport()
     transport.on_activity("conv-q", "hello from engineer")
-    ref = json.dumps({"service_url": "https://smba.trafficmanager.net/teams/", "conversation_id": "conv-q"})
+    ref = json.dumps(
+        {"service_url": "https://smba.trafficmanager.net/teams/", "conversation_id": "conv-q"}
+    )
     reply = await transport.receive_message(ref, timeout_seconds=0.5)
     assert reply == "hello from engineer"
 

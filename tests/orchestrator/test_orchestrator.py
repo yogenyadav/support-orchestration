@@ -9,8 +9,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
-
 from support_orchestration.glue.teams import DialectManager, StubTransport
 from support_orchestration.models import Case, CaseStatus, Diagnosis, Priority
 from support_orchestration.models.diagnosis import NextAction, ProposedFix
@@ -23,7 +21,6 @@ from support_orchestration.orchestrator.triage import (
 )
 from support_orchestration.storage.state_store import CaseStore
 from support_orchestration.subagents.base import BaseSubagent
-
 
 # ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -188,7 +185,10 @@ class TestParseTriageJson:
         assert result.confidence == 0.9
 
     def test_json_embedded_in_prose(self) -> None:
-        text = 'Here is my analysis: {"owning_domain": "IMS", "confidence": 0.5, "next_action": "probe"} done.'
+        text = (
+            'Here is my analysis: '
+            '{"owning_domain": "IMS", "confidence": 0.5, "next_action": "probe"} done.'
+        )
         result = _parse_triage_json(text)
         assert result.owning_domain == "IMS"
         assert result.next_action == TriageDecision.probe
@@ -512,8 +512,8 @@ class TestPromptRenderers:
         assert "WES" in text
 
     def test_render_lifecycle_map_text(self) -> None:
-        from support_orchestration.orchestrator.triage import load_lifecycle_map
         from support_orchestration.orchestrator.prompts import render_lifecycle_map_text
+        from support_orchestration.orchestrator.triage import load_lifecycle_map
         map_data = load_lifecycle_map("order")
         text = render_lifecycle_map_text(map_data)
         assert "ORDER" in text

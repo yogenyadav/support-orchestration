@@ -76,7 +76,7 @@ def _case_from_fixture(inp: dict[str, Any]) -> Case:
 
 def _score_diagnosis(diagnosis: Diagnosis, scoring: dict[str, Any]) -> bool:
     dcif = scoring["diagnosis_correct_if"]
-    return (
+    return bool(
         diagnosis.stuck_transition == dcif["stuck_transition"]
         and diagnosis.blocker_class == dcif["blocker_class"]
     )
@@ -228,7 +228,11 @@ async def validate_fixture_adapters(fixture: dict[str, Any]) -> dict[str, Any]:
         })
         if r["ok"]:
             res = r["result"]
-            r["ok"] = isinstance(res, dict) and res.get("found") is True and res.get("current_state") is not None
+            r["ok"] = (
+                isinstance(res, dict)
+                and res.get("found") is True
+                and res.get("current_state") is not None
+            )
             r["current_state"] = res.get("current_state") if isinstance(res, dict) else None
         checks["db_state_read"] = r
 
@@ -266,7 +270,8 @@ async def validate_fixture_adapters(fixture: dict[str, Any]) -> dict[str, Any]:
 
     # github_read — only validated if explicitly mocked
     if "github_read" in mocked:
-        sample_path = mocked["github_read"][0].get("path", "README.md") if mocked["github_read"] else "README.md"
+        gh_mocks = mocked["github_read"]
+        sample_path = gh_mocks[0].get("path", "README.md") if gh_mocks else "README.md"
         r = await _dispatch("mcp__support__github_read", {
             "client_id": inp["client"],
             "path": sample_path,
@@ -336,7 +341,9 @@ async def run_all_evals(
     for r in results:
         dom = r["details"]["predicted_domain"] or "unknown"
         if dom not in by_domain:
-            by_domain[dom] = {"total": 0, "triage_correct": 0, "diagnosis_correct": 0, "fix_match": 0}
+            by_domain[dom] = {
+                "total": 0, "triage_correct": 0, "diagnosis_correct": 0, "fix_match": 0,
+            }
         by_domain[dom]["total"] += 1
         if r["triage_accuracy"]:
             by_domain[dom]["triage_correct"] += 1

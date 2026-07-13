@@ -118,10 +118,13 @@ class BackgroundPrepRunner:
 
     async def _classify_via_batch_api(self, case: Case) -> dict[str, str | None] | None:
         """Submit entity classification to Haiku via Batch API (50% off)."""
+        client = self._anthropic
+        if client is None:
+            return None
         prompt = self._build_classify_prompt(case)
 
         try:
-            batch = await self._anthropic.beta.messages.batches.create(
+            batch = await client.beta.messages.batches.create(
                 requests=[{
                     "custom_id": f"classify-{case.case_id}",
                     "params": {
@@ -139,7 +142,7 @@ class BackgroundPrepRunner:
         # Poll until ended
         for _ in range(_BATCH_MAX_POLLS):
             try:
-                status = await self._anthropic.beta.messages.batches.retrieve(batch.id)
+                status = await client.beta.messages.batches.retrieve(batch.id)
                 if status.processing_status == "ended":
                     break
             except Exception as e:
@@ -152,14 +155,15 @@ class BackgroundPrepRunner:
 
         # Parse result
         try:
-            async for result in self._anthropic.beta.messages.batches.results(batch.id):
+            async for result in client.beta.messages.batches.results(batch.id):
                 if result.result.type == "succeeded":
                     content = result.result.message.content
                     text = content[0].text if content else ""
                     start = text.find("{")
                     end = text.rfind("}") + 1
                     if 0 <= start < end:
-                        return json.loads(text[start:end])  # type: ignore[return-value]
+                        parsed: dict[str, str | None] = json.loads(text[start:end])
+                        return parsed
         except Exception as e:
             logger.warning("Batch API result parse failed for %s: %s", case.jira_ticket_id, e)
 

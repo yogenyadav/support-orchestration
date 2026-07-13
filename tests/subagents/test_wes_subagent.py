@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from support_orchestration.glue.teams import DialectManager, StubTransport
 from support_orchestration.models import Case, Priority
 from support_orchestration.models.case import CaseStatus
 from support_orchestration.models.diagnosis import Diagnosis, NextAction
 from support_orchestration.subagents.base import WESSubagent, get_subagent
 from support_orchestration.subagents.prompts import bounded_give_up, parse_diagnosis_json
-from support_orchestration.glue.teams import DialectManager, StubTransport
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -72,7 +71,9 @@ def _tool_use_response(tool_name: str, tool_id: str, tool_input: dict) -> MagicM
     return resp
 
 
-def _diagnosis_text(next_action: str = "propose_to_human", reroute_target: str | None = None) -> str:
+def _diagnosis_text(
+    next_action: str = "propose_to_human", reroute_target: str | None = None
+) -> str:
     d: dict = {
         "entity": {"type": "order", "id": "12345", "current_state": "prioritized"},
         "stuck_transition": "prioritized → released",
@@ -192,7 +193,7 @@ async def test_diagnose_relay_no_dialect() -> None:
     assert isinstance(result, Diagnosis)
     # Verify the tool result was passed (not an error)
     call_args = client.messages.create.call_args_list[1]
-    messages = call_args.kwargs.get("messages") or call_args.args[0]
+    assert call_args.kwargs.get("messages") or call_args.args[0]
     # Second messages call should include tool_result in the history
     assert client.messages.create.call_count == 2
 
@@ -235,7 +236,7 @@ async def test_diagnose_enforce_client_scope() -> None:
         _end_turn_response(_diagnosis_text()),
     ]
     agent = WESSubagent(case, anthropic_client=client)
-    result = await agent.diagnose()
+    await agent.diagnose()
 
     second_call_kwargs = client.messages.create.call_args_list[1].kwargs
     messages = second_call_kwargs["messages"]
@@ -257,7 +258,7 @@ async def test_diagnose_enforce_allowlist() -> None:
         _end_turn_response(_diagnosis_text()),
     ]
     agent = WESSubagent(case, anthropic_client=client)
-    result = await agent.diagnose()
+    await agent.diagnose()
 
     second_call_kwargs = client.messages.create.call_args_list[1].kwargs
     messages = second_call_kwargs["messages"]

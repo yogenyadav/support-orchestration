@@ -78,7 +78,9 @@ async def c6_interpret_reply(
         logger.warning("C6 Haiku failed (%s); falling back to regex", exc)
         return "reject" if _REJECTION_RE.match(reply.strip()) else "affirm"
 
-VALID_AGENT_VERBS = frozenset({"/info", "/ask", "/question", "/clarify", "/validate", "/approve", "/status"})
+VALID_AGENT_VERBS = frozenset(
+    {"/info", "/ask", "/question", "/clarify", "/validate", "/approve", "/status"}
+)
 
 
 class TeamsTransport(ABC):
@@ -127,7 +129,9 @@ class DialectManager:
 
     async def send(self, verb: str, message: str) -> None:
         if verb not in VALID_AGENT_VERBS:
-            raise ValueError(f"Invalid dialect verb '{verb}'. Must be one of {sorted(VALID_AGENT_VERBS)}")
+            raise ValueError(
+                f"Invalid dialect verb '{verb}'. Must be one of {sorted(VALID_AGENT_VERBS)}"
+            )
         if self._case.open_request is not None:
             raise RuntimeError(
                 f"Dialect violation: cannot send '{verb}' — open request already pending: "
@@ -140,14 +144,19 @@ class DialectManager:
         ))
         assert self._conversation_ref, "conversation_ref not set"
         await self._transport.send_message(self._conversation_ref, full_message)
-        logger.info("DIALECT_SEND %s %s → %s", verb, self._case.jira_ticket_id, self._case.assignee_email)
+        logger.info(
+            "DIALECT_SEND %s %s → %s", verb, self._case.jira_ticket_id, self._case.assignee_email
+        )
 
     async def receive(self, timeout_seconds: float = 300) -> str:
         assert self._conversation_ref, "conversation_ref not set"
         reply = await self._transport.receive_message(self._conversation_ref, timeout_seconds)
         self._case.open_request = None
         self._case.dialogue.append(DialogueTurn(direction="human_to_agent", message=reply))
-        logger.info("DIALECT_RECV %s ← %s: %s", self._case.jira_ticket_id, self._case.assignee_email, reply[:80])
+        logger.info(
+            "DIALECT_RECV %s ← %s: %s",
+            self._case.jira_ticket_id, self._case.assignee_email, reply[:80],
+        )
         return reply
 
     async def send_info(self, message: str) -> None:

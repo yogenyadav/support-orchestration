@@ -87,12 +87,16 @@ class HttpPhoenixAdapter(PhoenixAdapter):
             timeout=self._timeout,
         )
         resp.raise_for_status()
-        return resp.json()
+        data: dict[str, Any] = resp.json()
+        return data
 
     def _normalise(self, client_id: str, raw: dict[str, Any]) -> dict[str, Any]:
         tier = raw.get("connectivity_tier", "human_relay")
         if tier not in ("direct_connect", "human_relay", "s3_logs"):
-            logger.warning("Phoenix returned unknown tier %r for %s; defaulting to human_relay", tier, client_id)
+            logger.warning(
+                "Phoenix returned unknown tier %r for %s; defaulting to human_relay",
+                tier, client_id,
+            )
             tier = "human_relay"
 
         posture = raw.get("log_posture", "human_relay")

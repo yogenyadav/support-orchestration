@@ -110,7 +110,7 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 2. Configure secrets
+# 2. Configure secrets (all optional — everything unset falls back to a stub)
 cp .env.example .env
 # Fill in ANTHROPIC_API_KEY and any integrations you need
 
@@ -118,11 +118,21 @@ cp .env.example .env
 pytest
 
 # 4. Run the eval harness
-python -m evals                         # triage only — no API key needed
+python -m evals                         # triage + baseline gate — no API key needed
 python -m evals --validate-fixtures     # adapter wiring check — no LLM
 python -m evals --diagnose              # LLM diagnosis (needs ANTHROPIC_API_KEY)
 python -m evals --verbose               # any of the above + logs/evals.log
+
+# 5. Run the service
+python -m support_orchestration --demo             # mock mode + seeded demo incident
+python -m support_orchestration                    # mode from config/runtime.yaml
+python -m support_orchestration --mode production  # live, once env vars are set
 ```
+
+The PoC runs **fully mocked** — no connectivity to any external system. Real
+connectivity is configuration, not code: `config/runtime.yaml` names the env
+vars for each integration, and `pip install -e ".[prod]"` adds the client DB /
+SSH drivers when Direct Connect clients are onboarded.
 
 ---
 
@@ -140,15 +150,15 @@ Each client has one of three connectivity postures (stored in Phoenix):
 
 ## Eval status
 
-18 fixtures across all 9 domains. 100% triage accuracy (deterministic, no LLM). Diagnosis eval active with `--diagnose`.
+21 fixtures across all 9 domains (order + tote entities, incl. one human_relay-tier fixture). 100% triage accuracy (deterministic, no LLM). Diagnosis eval active with `--diagnose`; scores gated against `evals/baseline.yaml`.
 
 | Domain | Fixtures |
 |---|---|
 | WES | 5 |
+| GTP_PICKING | 4 |
+| WCS | 3 |
 | ESB | 2 |
-| GTP_PICKING | 2 |
 | IMS | 2 |
-| WCS | 2 |
 | ASRS | 2 |
 | LPN | 2 |
 | infra | 1 |

@@ -27,6 +27,7 @@ def test_ssh_requires_credential():
 
     with mock.patch.dict("sys.modules", {"paramiko": mock.MagicMock()}):
         from importlib import reload
+
         import support_orchestration.tools.adapters.log_adapters as mod
         reload(mod)
         with pytest.raises(ValueError, match="key_path or runner_password"):
@@ -35,11 +36,11 @@ def test_ssh_requires_credential():
 
 def test_ssh_grep_command_safe():
     """Shell injection: query is shell-quoted in the grep command."""
-    from support_orchestration.tools.adapters.log_adapters import SshLogAdapter
     import unittest.mock as mock
 
     with mock.patch.dict("sys.modules", {"paramiko": mock.MagicMock()}):
         from importlib import reload
+
         import support_orchestration.tools.adapters.log_adapters as mod
         reload(mod)
         # Malicious query containing shell metacharacters
@@ -85,6 +86,7 @@ async def test_read_s3_raises_not_implemented():
 
     with mock.patch.dict("sys.modules", {"paramiko": mock.MagicMock()}):
         from importlib import reload
+
         import support_orchestration.tools.adapters.log_adapters as mod
         reload(mod)
         adapter = mod.SshLogAdapter("runner", "user", runner_password="pw")

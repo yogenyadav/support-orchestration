@@ -21,14 +21,18 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from support_orchestration.config.base import MODEL_HAIKU, MODEL_SONNET
 from support_orchestration.glue.jira import JiraClient
 from support_orchestration.glue.teams import DialectManager, StubTransport, c6_interpret_reply
 from support_orchestration.models import Case, CaseStatus, Diagnosis
 from support_orchestration.models.diagnosis import NextAction
-from support_orchestration.orchestrator.prompts import render_case_for_triage, render_warm_start_dossier
+from support_orchestration.orchestrator.prompts import (
+    render_case_for_triage,
+    render_warm_start_dossier,
+)
 from support_orchestration.orchestrator.triage import TriageDecision, run_triage
 from support_orchestration.subagents.base import BaseSubagent, get_subagent
 from support_orchestration.tools.mcp_server import VectorStoreAdapter
@@ -84,6 +88,7 @@ class Orchestrator:
         self._dialect = dialect
 
         # Default subagent factory wires anthropic_client + dialect through to diagnose()
+        self._subagent_factory: Callable[[str, Case], BaseSubagent]
         if subagent_factory is None:
             _client = anthropic_client
             _dial = self._dialect
@@ -178,11 +183,16 @@ class Orchestrator:
                 return
 
             subagent = self._subagent_factory(domain, self.case)
-            self.case.append_trail("orchestrator", "routed_to", notes=f"domain={domain} attempt={attempt}")
+            self.case.append_trail(
+                "orchestrator", "routed_to", notes=f"domain={domain} attempt={attempt}"
+            )
             self.case.status = CaseStatus.diagnosing
             self._persist()
 
-            logger.info("Routing to %s subagent for %s (attempt=%d)", domain, self.case.jira_ticket_id, attempt)
+            logger.info(
+                "Routing to %s subagent for %s (attempt=%d)",
+                domain, self.case.jira_ticket_id, attempt,
+            )
             diagnosis = await subagent.diagnose()
             self.case.reroute_guard.add(domain)
 
@@ -373,6 +383,9 @@ class Orchestrator:
     async def _build_c8_dossier(self) -> str:
         """C8 — Sonnet warm-start dossier build."""
         from support_orchestration.orchestrator.prompts import C8_SYSTEM
+
+        if self._anthropic is None:
+            return render_warm_start_dossier(self.case)
 
         try:
             resp = await self._anthropic.messages.create(

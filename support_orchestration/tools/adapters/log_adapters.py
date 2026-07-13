@@ -82,7 +82,7 @@ class SshLogAdapter(LogAdapter):
     def _run_command(self, client: Any, command: str) -> str:
         """Execute a read-only shell command and return stdout."""
         _, stdout, stderr = client.exec_command(command, timeout=self._connect_timeout)
-        out = stdout.read().decode("utf-8", errors="replace")
+        out: str = stdout.read().decode("utf-8", errors="replace")
         err = stderr.read().decode("utf-8", errors="replace")
         if err:
             logger.warning("SSH stderr for command %r: %s", command[:80], err[:200])

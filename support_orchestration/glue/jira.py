@@ -150,7 +150,7 @@ class AtlassianJiraClient(JiraClient):
         client_field: str = "customfield_10001",
         background_field: str = "description",
     ) -> None:
-        from atlassian import Jira  # type: ignore[import-untyped]
+        from atlassian import Jira
 
         self._jira = Jira(url=base_url, username=email, password=api_token, cloud=True)
         self._project_key = project_key
@@ -177,7 +177,7 @@ class AtlassianJiraClient(JiraClient):
                     "issuelinks",
                     self._client_field,
                 ],
-            )
+            ) or {}
             return [self._normalize(t) for t in result.get("issues", [])]
 
         return await asyncio.to_thread(_sync)
@@ -205,10 +205,12 @@ class AtlassianJiraClient(JiraClient):
             # Attempt resolution transition — name varies by Jira workflow config.
             # Log and continue if not found rather than failing the write.
             try:
-                transitions: dict[str, Any] = self._jira.issue_get_transitions(ticket_id) or {}
-                for t in transitions.get("transitions", []):
-                    if t.get("name", "").lower() in _RESOLVE_TRANSITION_NAMES:
-                        self._jira.issue_transition(ticket_id, t["id"])
+                transitions: list[dict[str, Any]] = (
+                    self._jira.get_issue_transitions(ticket_id) or []
+                )
+                for t in transitions:
+                    if str(t.get("name", "")).lower() in _RESOLVE_TRANSITION_NAMES:
+                        self._jira.set_issue_status_by_transition_id(ticket_id, t["id"])
                         logger.info("JIRA_TRANSITION %s → %s", ticket_id, t["name"])
                         break
                 else:
@@ -277,7 +279,7 @@ async def read_ticket(ticket_id: str, client: JiraClient | None = None) -> dict[
 
 
 async def write_resolution(
-    case: "Case",
+    case: Case,
     diagnosis_summary: str,
     fix_summary: str,
     *,

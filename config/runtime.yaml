@@ -1,0 +1,47 @@
+# Runtime connectivity configuration for the support-orchestration service.
+#
+# Start the service:
+#     python -m support_orchestration                       # uses this file
+#     python -m support_orchestration --config <path>       # or another one
+#     python -m support_orchestration --mode mock --demo    # seeded mock demo
+#
+# mode: mock        — the PoC mode. No connectivity to any external system;
+#                     Jira, Teams, Phoenix, GitHub, DB, logs, and the vector
+#                     store are all in-memory stubs.
+# mode: production  — real clients are built from environment variables. This
+#                     file only *names* the env vars — it never holds secrets.
+#                     Once those variables are set, the same code runs live;
+#                     no code change is needed. Any var left unset degrades to
+#                     the corresponding stub with a startup warning.
+
+mode: mock
+
+stores:
+  # Owned by the support system — never client production data.
+  state_db: data/state.db      # Case objects; crash recovery rehydrates from here
+  audit_db: data/audit.db      # every agent read + human approval (compliance)
+
+llm:
+  api_key_env: ANTHROPIC_API_KEY    # unset → LLM steps degrade to deterministic paths
+
+jira:                               # support system of record (the only allowed write)
+  base_url_env: ATLASSIAN_BASE_URL
+  email_env: ATLASSIAN_USER
+  api_token_env: ATLASSIAN_API_TOKEN
+  project_key: WH
+
+teams:                              # engineer dialogue (Azure Bot REST)
+  app_id_env: TEAMS_APP_ID
+  app_password_env: TEAMS_APP_PASSWORD
+  tenant_id_env: TEAMS_TENANT_ID
+
+# The adapters below are built by tools/adapters/factory.py, which reads these
+# exact environment variables (kept in sync with support_orchestration/config/base.py):
+#
+#   GITHUB_TOKEN, GITHUB_CLIENT_ORG_PREFIX      — read-only client code access
+#   PHOENIX_BASE_URL, PHOENIX_API_TOKEN         — per-client connectivity resolution
+#   VECTOR_STORE_DSN                            — pgvector history store
+#                                                 (postgresql://user:pass@host/db)
+#
+# Per-client DB and log adapters are built per incident from Phoenix connectivity
+# details — they are never configured globally.

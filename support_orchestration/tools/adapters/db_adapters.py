@@ -111,11 +111,10 @@ class OracleDbAdapter(_ScopedMixin, DbAdapter):
         self._check_scope(client_id)
 
         def _sync() -> list[dict[str, Any]]:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(sql, params)  # oracledb supports :name natively
-                    cols = [d[0].lower() for d in (cur.description or [])]
-                    return [dict(zip(cols, row)) for row in cur.fetchall()]
+            with self._connect() as conn, conn.cursor() as cur:
+                cur.execute(sql, params)  # oracledb supports :name natively
+                cols = [d[0].lower() for d in (cur.description or [])]
+                return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
 
         return await asyncio.to_thread(_sync)
 
@@ -124,26 +123,25 @@ class OracleDbAdapter(_ScopedMixin, DbAdapter):
         hint = table_hint.upper()
 
         def _sync() -> dict[str, Any]:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT table_name, column_name, data_type "
-                        "FROM all_tab_columns "
-                        "WHERE UPPER(table_name) LIKE :hint "
-                        "ORDER BY table_name, column_id",
-                        {"hint": f"%{hint}%"},
-                    )
-                    rows = cur.fetchall()
-                    if not rows:
-                        return {"table_name": table_hint, "columns": []}
-                    actual = rows[0][0]
-                    return {
-                        "table_name": actual,
-                        "columns": [
-                            {"name": r[1].lower(), "type": r[2]} for r in rows
-                            if r[0] == actual
-                        ],
-                    }
+            with self._connect() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT table_name, column_name, data_type "
+                    "FROM all_tab_columns "
+                    "WHERE UPPER(table_name) LIKE :hint "
+                    "ORDER BY table_name, column_id",
+                    {"hint": f"%{hint}%"},
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    return {"table_name": table_hint, "columns": []}
+                actual = rows[0][0]
+                return {
+                    "table_name": actual,
+                    "columns": [
+                        {"name": r[1].lower(), "type": r[2]} for r in rows
+                        if r[0] == actual
+                    ],
+                }
 
         return await asyncio.to_thread(_sync)
 
@@ -175,7 +173,9 @@ class PostgresDbAdapter(_ScopedMixin, DbAdapter):
     async def _get_pool(self) -> Any:
         if self._pool is None:
             import asyncpg
-            self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5, command_timeout=30)
+            self._pool = await asyncpg.create_pool(
+                self._dsn, min_size=1, max_size=5, command_timeout=30
+            )
         return self._pool
 
     async def query(self, client_id: str, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -265,7 +265,7 @@ class MsSqlDbAdapter(_ScopedMixin, DbAdapter):
                 cur = conn.cursor()
                 cur.execute(converted_sql, values)
                 cols = [d[0].lower() for d in (cur.description or [])]
-                return [dict(zip(cols, row)) for row in cur.fetchall()]
+                return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
 
         return await asyncio.to_thread(_sync)
 

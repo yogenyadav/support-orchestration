@@ -103,7 +103,9 @@ def _print_validation_table(results: list[dict[str, Any]]) -> None:
             else:
                 cells += f" {'ok' if c['ok'] else 'FAIL':>9}"
         hs = checks.get("history_search", {})
-        blocker = "✓" if hs.get("blocker_class_match") else ("✗" if "blocker_class_match" in hs else "—")
+        blocker = "✓" if hs.get("blocker_class_match") else (
+            "✗" if "blocker_class_match" in hs else "—"
+        )
         status = "ok" if r["all_ok"] else "FAIL"
         print(f"{r['fixture_id']:<{col}}{cells}  {blocker:>7}  {status}")
 
@@ -115,7 +117,10 @@ def _print_validation_summary(agg: dict[str, Any]) -> None:
     if agg["failed"]:
         print(f"Failed:                  {agg['failed']}")
     if agg["no_mocked_responses"]:
-        print(f"No mocked responses:     {agg['no_mocked_responses']}  (add mocked_tool_responses to enable)")
+        print(
+            f"No mocked responses:     {agg['no_mocked_responses']}"
+            "  (add mocked_tool_responses to enable)"
+        )
     print(f"blocker_class verified:  {agg['blocker_class_verified']}/{agg['blocker_class_total']}")
 
 
@@ -133,10 +138,14 @@ async def _run_validate(domain: str | None) -> int:
     return 0
 
 
-async def _run(domain: str | None, diagnose: bool = False) -> int:
+async def _run(domain: str | None, diagnose: bool = False, record_baseline: bool = False) -> int:
     import os
 
-    from evals.harness import run_all_evals  # noqa: PLC0415 — lazy import avoids import-time side effects
+    from evals.baseline import compare_to_baseline, load_baseline
+    from evals.baseline import record_baseline as _record_baseline
+    from evals.harness import (
+        run_all_evals,  # noqa: PLC0415 — lazy import avoids import-time side effects
+    )
 
     anthropic_client = None
     if diagnose:
@@ -144,10 +153,16 @@ async def _run(domain: str | None, diagnose: bool = False) -> int:
             import anthropic
             anthropic_client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         except KeyError:
-            print("Error: --diagnose requires ANTHROPIC_API_KEY environment variable.", file=sys.stderr)
+            print(
+                "Error: --diagnose requires ANTHROPIC_API_KEY environment variable.",
+                file=sys.stderr,
+            )
             return 1
         except ImportError:
-            print("Error: --diagnose requires 'anthropic' package (pip install anthropic).", file=sys.stderr)
+            print(
+                "Error: --diagnose requires 'anthropic' package (pip install anthropic).",
+                file=sys.stderr,
+            )
             return 1
 
     agg = await run_all_evals(domain=domain, anthropic_client=anthropic_client)
@@ -156,6 +171,23 @@ async def _run(domain: str | None, diagnose: bool = False) -> int:
     if _any_regression(agg):
         print("\nResult: REGRESSION — one or more triage checks failed.")
         return 1
+
+    if record_baseline:
+        if domain is not None:
+            print("\nError: --record-baseline requires a full run (no --domain filter).",
+                  file=sys.stderr)
+            return 1
+        written = _record_baseline(agg)
+        print(f"\nBaseline recorded: {written}")
+    elif domain is None:
+        # Baseline gate only makes sense against the full fixture set.
+        regressions = compare_to_baseline(agg, load_baseline())
+        if regressions:
+            print("\nResult: REGRESSION vs recorded baseline —")
+            for msg in regressions:
+                print(f"  {msg}")
+            return 1
+
     print("\nResult: ok")
     return 0
 
@@ -176,6 +208,11 @@ def sync_main() -> None:
         help="Enable LLM diagnosis eval (requires ANTHROPIC_API_KEY)",
     )
     parser.add_argument(
+        "--record-baseline",
+        action="store_true",
+        help="Write this run's scores to evals/baseline.yaml as the new regression baseline",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable DEBUG logging to logs/evals.log and stderr",
@@ -184,4 +221,6 @@ def sync_main() -> None:
     _configure_logging(args.verbose)
     if args.validate_fixtures:
         sys.exit(asyncio.run(_run_validate(domain=args.domain)))
-    sys.exit(asyncio.run(_run(domain=args.domain, diagnose=args.diagnose)))
+    sys.exit(asyncio.run(_run(
+        domain=args.domain, diagnose=args.diagnose, record_baseline=args.record_baseline,
+    )))

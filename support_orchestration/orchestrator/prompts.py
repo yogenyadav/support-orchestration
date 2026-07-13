@@ -72,7 +72,7 @@ def render_lifecycle_map_text(map_data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_case_for_triage(case: "Case") -> str:
+def render_case_for_triage(case: Case) -> str:
     """Build the per-incident user message for C3 triage (never cached)."""
     parts = [
         f"Ticket: {case.jira_ticket_id}",
@@ -98,7 +98,7 @@ def render_case_for_triage(case: "Case") -> str:
     return "\n".join(parts)
 
 
-def render_warm_start_dossier(case: "Case") -> str:
+def render_warm_start_dossier(case: Case) -> str:
     """Template-render a warm-start dossier (used when no Anthropic client is available)."""
     lines: list[str] = [
         f"Incident {case.jira_ticket_id} — {case.client} — {case.priority.value}",

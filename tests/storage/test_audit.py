@@ -1,7 +1,4 @@
 import json
-import sqlite3
-
-import pytest
 
 from support_orchestration.storage.audit import AuditStore
 

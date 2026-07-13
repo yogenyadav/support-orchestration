@@ -10,7 +10,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-
 # ── Adapter interfaces ────────────────────────────────────────────────────────
 
 class DbAdapter(ABC):
@@ -133,10 +132,11 @@ def build_mcp_server(
     Adapters default to stubs so tests need not pass real connections.
     """
     from mcp.server.fastmcp import FastMCP
+
     from support_orchestration.tools.db_state_reader import db_state_read as _db_fn
-    from support_orchestration.tools.log_reader import log_read as _log_fn
     from support_orchestration.tools.github_reader import github_read as _gh_fn
     from support_orchestration.tools.history_retrieval import history_search as _hist_fn
+    from support_orchestration.tools.log_reader import log_read as _log_fn
     from support_orchestration.tools.phoenix_resolver import phoenix_resolve as _phx_fn
 
     _db_a = db or StubDbAdapter()
@@ -153,7 +153,7 @@ def build_mcp_server(
         entity_type: str,
         entity_id: str,
         table_hint: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         return await _db_fn(client_id, entity_type, entity_id, _db_a, table_hint)
 
     @mcp.tool()
@@ -164,7 +164,7 @@ def build_mcp_server(
         host: str | None = None,
         bucket: str | None = None,
         prefix: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         return await _log_fn(
             client_id, query, log_posture, _log_a,
             host=host, bucket=bucket, prefix=prefix,
@@ -177,7 +177,7 @@ def build_mcp_server(
         repo: str | None = None,
         ref: str = "main",
         org: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         return await _gh_fn(client_id, path, repo=repo, ref=ref, org=org, github=_gh_a)
 
     @mcp.tool()
@@ -187,14 +187,14 @@ def build_mcp_server(
         top_k: int = 5,
         entity_type: str | None = None,
         domain: str | None = None,
-    ) -> list:
+    ) -> list[dict[str, Any]]:
         return await _hist_fn(client_id, query, _vec_a, top_k, entity_type, domain)
 
     @mcp.tool()
     async def phoenix_resolve(
         client_id: str,
         force_refresh: bool = False,
-    ) -> dict:
+    ) -> dict[str, Any]:
         return await _phx_fn(client_id, force_refresh=force_refresh)
 
     return mcp
@@ -217,12 +217,12 @@ def make_agent_hooks(case: Any, audit_store: Any = None) -> dict[str, Any]:
         enforce_client_scope,
     )
 
-    def pre_tool_use(tool_name: str, tool_input: dict) -> None:
+    def pre_tool_use(tool_name: str, tool_input: dict[str, Any]) -> None:
         block_writes(tool_name, tool_input)
         enforce_client_scope(tool_name, tool_input, case.client)
         enforce_allowlist(tool_name, ALLOWED_TOOLS)
 
-    def post_tool_use(tool_name: str, tool_input: dict, tool_output: object) -> None:
+    def post_tool_use(tool_name: str, tool_input: dict[str, Any], tool_output: object) -> None:
         audit_read(
             tool_name, tool_input, tool_output,
             case.case_id, case.client,

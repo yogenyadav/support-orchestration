@@ -69,15 +69,22 @@ class FixtureLogAdapter(LogAdapter):
 
 
 class FixtureVectorAdapter(VectorStoreAdapter):
-    """Returns fixture-specified history search results."""
+    """Returns fixture-specified history search results. Writes are recorded, not persisted."""
 
     def __init__(self, results: list[dict[str, Any]]) -> None:
         self._results = results
+        self.written: list[dict[str, Any]] = []
 
     async def search(self, query: str, top_k: int, filters: dict[str, Any]) -> list[dict[str, Any]]:
         if self._results:
-            return self._results[0].get("response", {}).get("results", [])
+            results: list[dict[str, Any]] = (
+                self._results[0].get("response", {}).get("results", [])
+            )
+            return results
         return []
+
+    async def write(self, record: dict[str, Any]) -> None:
+        self.written.append(record)
 
 
 class FixtureGithubAdapter(GithubAdapter):

@@ -64,7 +64,8 @@ def load_lifecycle_map(entity_type: str, client_id: str | None = None) -> dict[s
 
     if client_id:
         delta_path = (
-            Path(__file__).parents[2] / "maps" / "clients" / client_id / f"{entity_type}_deltas.yaml"
+            Path(__file__).parents[2] / "maps" / "clients" / client_id
+            / f"{entity_type}_deltas.yaml"
         )
         if delta_path.exists():
             with delta_path.open() as f:
@@ -77,9 +78,10 @@ def load_lifecycle_map(entity_type: str, client_id: str | None = None) -> dict[s
 
 def find_transition(map_data: dict[str, Any], current_state: str) -> dict[str, Any] | None:
     """Find the transition the entity should have taken from current_state."""
-    for transition in map_data.get("transitions", []):
+    transitions: list[dict[str, Any]] = map_data.get("transitions", [])
+    for transition in transitions:
         if transition["from"] == current_state:
-            return transition  # type: ignore[return-value]
+            return transition
     return None
 
 
@@ -96,7 +98,7 @@ def _delta_merge(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
 
 # ── Triage pipeline ───────────────────────────────────────────────────────────
 
-async def run_triage(case: "Case", anthropic_client: Any | None) -> TriageResult:
+async def run_triage(case: Case, anthropic_client: Any | None) -> TriageResult:
     """Entry point: C1 (optional) + C3 (LLM or deterministic fallback).
 
     If ``anthropic_client`` is None, falls back to deterministic map lookup —
@@ -122,7 +124,7 @@ async def run_triage(case: "Case", anthropic_client: Any | None) -> TriageResult
 
 # ── Deterministic triage (map-only, no LLM) ──────────────────────────────────
 
-def _deterministic_triage(case: "Case") -> TriageResult:
+def _deterministic_triage(case: Case) -> TriageResult:
     """Map-lookup-only triage. Used in tests and when no Anthropic client is available."""
     # Background prep may have already set owning_domain + stuck_transition
     if case.owning_domain and case.stuck_transition:
@@ -165,7 +167,7 @@ def _deterministic_triage(case: "Case") -> TriageResult:
 
 # ── LLM triage (C1 + C3) ─────────────────────────────────────────────────────
 
-async def _llm_triage(case: "Case", anthropic_client: Any) -> TriageResult:
+async def _llm_triage(case: Case, anthropic_client: Any) -> TriageResult:
     """C1 (Haiku entity classify if needed) + C3 (Sonnet route decision)."""
     from support_orchestration.orchestrator.prompts import (
         C1_SYSTEM,
@@ -223,12 +225,15 @@ async def _llm_triage(case: "Case", anthropic_client: Any) -> TriageResult:
         )
         return result
     except Exception as e:
-        logger.warning("C3 triage LLM call failed for %s: %s — falling back to deterministic", case.jira_ticket_id, e)
+        logger.warning(
+            "C3 triage LLM call failed for %s: %s — falling back to deterministic",
+            case.jira_ticket_id, e,
+        )
         return _deterministic_triage(case)
 
 
 async def _c1_classify(
-    case: "Case", anthropic_client: Any, system: str
+    case: Case, anthropic_client: Any, system: str
 ) -> dict[str, str | None] | None:
     """C1 — single-shot Haiku entity classification."""
     if not case.description:
@@ -244,7 +249,8 @@ async def _c1_classify(
         text = resp.content[0].text if resp.content else ""
         start, end = text.find("{"), text.rfind("}") + 1
         if 0 <= start < end:
-            return json.loads(text[start:end])  # type: ignore[return-value]
+            parsed: dict[str, str | None] = json.loads(text[start:end])
+            return parsed
     except Exception as e:
         logger.warning("C1 entity classification failed for %s: %s", case.jira_ticket_id, e)
     return None

@@ -1,0 +1,10 @@
+# Eval baseline — regression gate. Re-record with:
+#   ANTHROPIC_API_KEY=... python -m evals --diagnose --record-baseline
+#
+# diagnosis/fix metrics are null until a live --diagnose run has been recorded
+# (needs an API key — the mocked PoC never makes external calls).
+recorded_at: "2026-07-12T00:00:00+00:00"
+total_fixtures: 21
+triage_accuracy_pct: 100.0
+diagnosis_correct_pct: null
+fix_match_pct: null

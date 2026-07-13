@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from support_orchestration.config.base import MAX_CONCURRENT_ORCHESTRATORS
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 30
 
-OrchestratorFactory = Callable[[Case], Awaitable[None]]
+OrchestratorFactory = Callable[[Case], Coroutine[Any, Any, None]]
 
 
 class JiraPoller:
@@ -69,6 +69,24 @@ class JiraPoller:
             except Exception:
                 logger.exception("Poll iteration failed; continuing in %ds", POLL_INTERVAL_SECONDS)
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+    def rehydrate(self, cases: list[Case]) -> int:
+        """Crash recovery: resume orchestrators for non-terminal cases from the state store.
+
+        Assigned cases respawn an orchestrator immediately (subject to the cap);
+        unassigned ones are marked seen so the normal poll loop picks them up
+        when 'assigned to' is populated. Returns the number of orchestrators resumed.
+        """
+        resumed = 0
+        for case in cases:
+            jira_id = case.jira_ticket_id
+            self._seen_jira_ids.add(jira_id)
+            if case.assignee_email and jira_id not in self._active_cases:
+                self._try_spawn_orchestrator(jira_id, case)
+                if jira_id in self._active_cases:
+                    resumed += 1
+                    logger.info("WATCHER rehydrated %s (status=%s)", jira_id, case.status.value)
+        return resumed
 
     @property
     def active_count(self) -> int:

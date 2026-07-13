@@ -24,7 +24,7 @@ async def github_read(
     repo: str | None = None,
     ref: str = "main",
     org: str | None = None,
-    github: "GithubAdapter",
+    github: GithubAdapter,
 ) -> dict[str, Any]:
     """
     Read a file from GitHub (base org or client org).

@@ -219,8 +219,10 @@ class BaseSubagent:
         falling back to stub adapters for local/offline use.
         """
         from support_orchestration.tools.mcp_server import (
-            StubDbAdapter, StubGithubAdapter, StubLogAdapter,
-            StubPhoenixAdapter, StubVectorAdapter,
+            StubDbAdapter,
+            StubGithubAdapter,
+            StubLogAdapter,
+            StubVectorAdapter,
         )
 
         if tool_name == "mcp__support__db_state_read":

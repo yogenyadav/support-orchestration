@@ -119,6 +119,7 @@ The Agent SDK is the harness. Anything that must be true **every time** — no w
 | 6. Additional domain subagents | ✅ DONE | Prompt 9. All 8 remaining domain subagents fully built (WES pattern): rich `{DOMAIN}_DOMAIN_CONTEXT` + builder functions in `subagents/prompts.py`; `system_prompt` properties updated in `subagents/base.py`; 14 new eval fixtures (18 total, 100% triage accuracy). |
 | 7. `mocked_tool_responses` + diagnosis eval | ✅ DONE | Prompt 10. `mocked_tool_responses` added to all 18 fixtures (phoenix_resolve, db_state_read, history_search, log_read). Fixed `FixtureDbAdapter.query()` bug. Added `--diagnose` CLI flag. Run: `ANTHROPIC_API_KEY=... python -m evals --diagnose`. 218 tests pass. |
 | 8. Agentic RAG write-back | ✅ DONE | Post-P10 (2026-07-11). `VectorStoreAdapter.write()` (upsert on `UNIQUE(jira_id)`, HNSW index `m=16/ef=64`). `Orchestrator._formulate_memory()` (Haiku C9 — structured 4-line block: **Context / Root Cause / Resolution / Watch Out For**). Write-back triggered on every resolution; non-fatal. `vector_adapter` kwarg on `Orchestrator.__init__`. 225 tests. |
+| 9. Hardening + runtime entrypoint | ✅ DONE | Post-P10 (2026-07-12). Fixed eval-harness regression (`FixtureVectorAdapter.write()`) + harness smoke tests. Fixed real Jira bug: `issue_get_transitions` doesn't exist on `atlassian.Jira` → `get_issue_transitions` + `set_issue_status_by_transition_id`. GitHub Actions CI (ruff + mypy strict + pytest + evals — all clean). Service entrypoint: `python -m support_orchestration [--demo]`, `config/runtime.yaml` (mock/production modes; production reads env vars *named* in the yaml), `runtime.py` composition root, poller `rehydrate()` crash recovery. Eval baseline gate (`evals/baseline.yaml`, `--record-baseline`). 3 tote fixtures incl. first `human_relay`-tier fixture (21 total). `block_writes` now token-based (no `postgres`→`post` false positive). Prod drivers moved to `pip install -e ".[prod]"` extra (lazy imports). 247 tests. |
 
 ## Eval harness — what's running
 
@@ -142,31 +143,51 @@ mocked_tool_responses:  # optional — enables diagnosis eval in Prompt 7
   db_state_read / log_read / history_search / github_read / phoenix_resolve
 ```
 
-**Current fixtures** (18 total, 100% triage accuracy — added in Prompt 9):
+**Current fixtures** (21 total, 100% triage accuracy):
 - WES (5): `example_order_stuck_prioritized_01`, `wes_order_lost_ack_01`, `wes_order_ims_hold_01`, `wes_order_stuck_at_validated_01`
 - ESB (2): `esb_order_stuck_queue_01`, `esb_order_bad_input_01`
-- GTP_PICKING (2): `gtp_picking_order_service_down_01`, `gtp_picking_order_ims_hold_01`
+- GTP_PICKING (2 order + 2 tote): `gtp_picking_order_service_down_01`, `gtp_picking_order_ims_hold_01`, `gtp_picking_tote_ims_hold_01`, `gtp_picking_tote_bin_unavailable_relay_01`
 - IMS (2): `ims_order_count_discrepancy_01`, `ims_order_service_down_01`
-- WCS (2): `wcs_order_socket_failure_01`, `wcs_order_service_down_01`
+- WCS (2 order + 1 tote): `wcs_order_socket_failure_01`, `wcs_order_service_down_01`, `wcs_tote_socket_failure_01`
 - ASRS (2): `asrs_order_storage_unavailable_01`, `asrs_order_retrieval_timeout_01`
 - LPN (2): `lpn_order_printer_fault_01`, `lpn_order_data_missing_01`
 - infra (1): `infra_order_oom_crash_01`
 - GTP_DECANT (1): `gtp_decant_bin_not_placed_01`
 
-Note: IMS, ASRS, LPN, infra, GTP_DECANT are reroute-target domains — their fixtures use a parent-domain `entity_current_state` (GTP_PICKING or WCS) for triage, and test diagnosis-layer rerouting.
+Notes:
+- IMS, ASRS, LPN, infra, GTP_DECANT are reroute-target domains — their fixtures use a parent-domain `entity_current_state` (GTP_PICKING or WCS) for triage, and test diagnosis-layer rerouting.
+- The 3 `*_tote_*` fixtures exercise `maps/base/tote.yaml`. `gtp_picking_tote_bin_unavailable_relay_01` is the first **human_relay**-tier fixture: deliberately no `db_state_read`/`log_read` mocks (those tools are unavailable for that tier).
 
 **Scoring implementation** (`evals/harness.py`):
 - `triage_accuracy` — live: `load_lifecycle_map` + `find_transition` → `owning_domain` (no LLM)
 - `diagnosis_correct` + `fix_match` — active when `anthropic_client=` passed to `run_all_evals()`. Without client, diagnosis is skipped (NotImplementedError → `diagnosis_skipped=True`).
 - **Prompt 10 done:** All 18 fixtures have `mocked_tool_responses` (phoenix_resolve + db_state_read + history_search + log_read). `FixtureDbAdapter.query()` bug fixed (now matches by entity_id only). Adapter wiring validation (`--validate-fixtures`) and `--diagnose` CLI flags added. `--verbose` writes DEBUG logs to `logs/evals.log`.
 
+**Baseline gate** (`evals/baseline.py` + `evals/baseline.yaml`, committed): full runs are compared against recorded metrics (5% tolerance for LLM noise) and exit 1 on a drop. Diagnosis/fix baselines are `null` until recorded with a live key: `ANTHROPIC_API_KEY=... python -m evals --diagnose --record-baseline`.
+
 **CLI quick-reference:**
 ```bash
-.venv/bin/python3.12 -m evals                           # triage — instant, no API key
+.venv/bin/python3.12 -m evals                           # triage + baseline gate — no API key
 .venv/bin/python3.12 -m evals --validate-fixtures       # adapter wiring — no LLM
 .venv/bin/python3.12 -m evals --diagnose                # LLM diagnosis (needs ANTHROPIC_API_KEY)
+.venv/bin/python3.12 -m evals --diagnose --record-baseline  # record new baseline.yaml
 .venv/bin/python3.12 -m evals --verbose                 # any of the above + logs/evals.log
 ```
+
+## Running the service
+
+`support_orchestration/runtime.py` is the composition root; `config/runtime.yaml` is the connectivity config (mode: `mock` | `production`; production reads env vars *named* in the yaml — secrets never live in the file; anything unset degrades to a stub with a warning).
+
+```bash
+.venv/bin/python3.12 -m support_orchestration --demo    # mock mode, seeded demo incident
+.venv/bin/python3.12 -m support_orchestration --mode production   # once env vars are set
+```
+
+On startup the runtime **rehydrates** (resumes orchestrators for non-terminal cases in the state store), then polls. SIGINT/SIGTERM shut down cleanly. Prod connectivity drivers (oracledb, pyodbc, asyncpg, paramiko) are the `.[prod]` extra — the PoC runs fully mocked without them.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push/PR: `ruff check .` → `mypy support_orchestration evals` (strict, zero errors) → `pytest` → `python -m evals` → `python -m evals --validate-fixtures`. Keep all five green.
 
 ## How to work in this repo
 

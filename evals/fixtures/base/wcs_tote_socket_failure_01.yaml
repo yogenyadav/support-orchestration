@@ -1,0 +1,72 @@
+# Eval fixture — synthetic example (not a real incident).
+# TOTE-entity fixture: WCS-owned handoff from pick station to takeaway conveyor.
+
+fixture_id: "wcs_tote_socket_failure_01"
+grounding: "[SYNTHETIC — from maps/base/tote.yaml tote_complete_to_conveyor + skills/wcs-diagnosis]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-402"
+  client: "example-client"
+  priority: "P2"
+  description: "Closed totes are piling up at pick stations 3 and 4 — operators place them on the takeaway conveyor but the system still shows them at the station. Conveyor is running."
+  entity_type: "tote"
+  entity_id: "T-90233"
+  entity_current_state: "picking_complete"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "WCS"
+  stuck_transition: "picking_complete → on_conveyor"
+  root_cause: "The WES→WCS TCP socket dropped 40 minutes ago and did not re-establish. WES 'tote onto takeaway' instructions are not reaching WCS, so WCS never registers the totes on the conveyor even though operators physically placed them."
+  blocker_class: "socket_failure"
+  fix_applied: "Restarted the WES↔WCS socket listener on the WCS side; connection re-established. Re-sent pending takeaway instructions from WES. All queued totes registered on_conveyor within 3 minutes."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "WCS"
+  diagnosis_correct_if:
+    stuck_transition: "picking_complete → on_conveyor"
+    blocker_class: "socket_failure"
+  fix_match_if:
+    proposed_fix_must_mention: ["socket", "restart", "WCS"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "wcs-db-01.example-client.internal"
+      log_host: "wcs-app-01.example-client.internal"
+      db_port: 1433
+      db_type: "mssql"
+
+  db_state_read:
+    - entity_id: "T-90233"
+      response:
+        id: "T-90233"
+        state: "picking_complete"
+        order_id: "45233"
+        wcs_takeaway_instruction_acked: false
+        closed_at: "2024-03-15T14:02:00Z"
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-152"
+            summary: "Totes piling up at pick stations — physically on conveyor but system shows at station"
+            root_cause: "WES→WCS TCP socket dropped; takeaway instructions not reaching WCS"
+            blocker_class: "socket_failure"
+            fix_summary: "Restarted WCS socket listener, re-sent pending takeaway instructions from WES; totes registered within minutes"
+            similarity: 0.96
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 13:58:41 ERROR WCS SocketListener: connection reset by peer (WES 10.20.1.5:9400)
+          2024-03-15 13:58:41 WARN  WCS SocketListener: no active WES connection — instruction channel down
+          2024-03-15 14:05:12 WARN  WES: takeaway instruction for tote T-90233 unacknowledged (retry 3/3)
+          2024-03-15 14:20:30 WARN  WES: 11 totes with unacknowledged takeaway instructions

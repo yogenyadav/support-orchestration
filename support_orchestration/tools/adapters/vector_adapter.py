@@ -30,7 +30,8 @@ Install: pip install asyncpg pgvector
 
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from support_orchestration.tools.mcp_server import VectorStoreAdapter
 
@@ -172,7 +173,8 @@ class PgvectorStoreAdapter(VectorStoreAdapter):
 
         sql = f"""
             INSERT INTO {self._table}
-                (jira_id, client_id, entity_type, domain, summary, root_cause, fix_summary, embedding)
+                (jira_id, client_id, entity_type, domain,
+                 summary, root_cause, fix_summary, embedding)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (jira_id) DO UPDATE SET
                 root_cause  = EXCLUDED.root_cause,

@@ -60,10 +60,9 @@ def case_from_jira(ticket: dict[str, Any]) -> Case:
     priority = Priority(ticket["priority"])
 
     created_str: str = ticket.get("created", "")
-    if created_str:
-        created_at = _parse_jira_datetime(created_str)
-    else:
-        created_at = datetime.now(timezone.utc)
+    created_at = (
+        _parse_jira_datetime(created_str) if created_str else datetime.now(timezone.utc)
+    )
 
     sla_deadline = created_at + timedelta(hours=_SLA_HOURS[priority])
 

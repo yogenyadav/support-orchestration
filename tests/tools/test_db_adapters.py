@@ -9,7 +9,6 @@ from support_orchestration.tools.adapters.db_adapters import (
     _named_to_qmark,
 )
 
-
 # ── Param conversion helpers ──────────────────────────────────────────────────
 
 def test_named_to_positional_basic():
@@ -73,6 +72,7 @@ def test_oracle_scope_check():
 
     with mock.patch.dict("sys.modules", {"oracledb": mock.MagicMock()}):
         from importlib import reload
+
         import support_orchestration.tools.adapters.db_adapters as db_mod
         reload(db_mod)
         adapter = db_mod.OracleDbAdapter("acme", "host", 1521, "svc", "user", "pw")
@@ -87,6 +87,7 @@ def test_oracle_correct_scope():
 
     with mock.patch.dict("sys.modules", {"oracledb": mock.MagicMock()}):
         from importlib import reload
+
         import support_orchestration.tools.adapters.db_adapters as db_mod
         reload(db_mod)
         adapter = db_mod.OracleDbAdapter("acme", "host", 1521, "svc", "user", "pw")
@@ -117,6 +118,7 @@ def test_postgres_scope_check():
 
     with mock.patch.dict("sys.modules", {"asyncpg": mock.MagicMock()}):
         from importlib import reload
+
         import support_orchestration.tools.adapters.db_adapters as db_mod
         reload(db_mod)
         adapter = db_mod.PostgresDbAdapter("acme", "postgresql://user:pw@host/db")
@@ -148,6 +150,7 @@ def test_mssql_scope_check():
 
     with mock.patch.dict("sys.modules", {"pyodbc": mock.MagicMock()}):
         from importlib import reload
+
         import support_orchestration.tools.adapters.db_adapters as db_mod
         reload(db_mod)
         adapter = db_mod.MsSqlDbAdapter("acme", "srv", "db", "user", "pw")

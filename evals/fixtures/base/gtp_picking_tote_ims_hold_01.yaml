@@ -1,0 +1,75 @@
+# Eval fixture — synthetic example (not a real incident).
+# First TOTE-entity fixture: exercises the tote lifecycle map (maps/base/tote.yaml)
+# at its most common halt point — the IMS cycle count at pick completion.
+
+fixture_id: "gtp_picking_tote_ims_hold_01"
+grounding: "[SYNTHETIC — from maps/base/tote.yaml tote_picking_to_complete + skills/ims-diagnosis]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-401"
+  client: "example-client"
+  priority: "P2"
+  description: "Tote T-88012 has been sitting at the pick station for over an hour. Operator says she finished picking but the terminal won't let her close the tote. Parent order 44012 stuck in picking."
+  entity_type: "tote"
+  entity_id: "T-88012"
+  entity_current_state: "picking_in_progress"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "GTP_PICKING"
+  stuck_transition: "picking_in_progress → picking_complete"
+  root_cause: "IMS cycle count at pick completion found 2 fewer items in the bin than expected. IMS deliberately halted the tote pending a count correction — this is the inventory integrity gate working as designed, not a software fault."
+  blocker_class: "ims_hold"
+  fix_applied: "Engineer confirmed physical count with the operator, applied the IMS count correction for the bin, and cleared the count hold. Tote closed and advanced to picking_complete within 1 minute."
+  fix_sql: "UPDATE ims_count_holds SET status = 'CLEARED', cleared_by = 'engineer' WHERE tote_id = 'T-88012' AND status = 'OPEN'"
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "GTP_PICKING"
+  diagnosis_correct_if:
+    stuck_transition: "picking_in_progress → picking_complete"
+    blocker_class: "ims_hold"
+  fix_match_if:
+    proposed_fix_must_mention: ["count", "hold", "clear"]
+
+# ── Mocked tool responses (enables deterministic diagnosis eval) ───────────────
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "direct_connect"
+      log_posture: "direct"
+      db_host: "gtp-db-01.example-client.internal"
+      log_host: "gtp-app-01.example-client.internal"
+      db_port: 1521
+      db_type: "oracle"
+
+  db_state_read:
+    - entity_id: "T-88012"
+      response:
+        id: "T-88012"
+        state: "picking_in_progress"
+        order_id: "44012"
+        ims_hold_active: true
+        ims_hold_reason: "CYCLE_COUNT_DISCREPANCY"
+        expected_count: 12
+        counted: 10
+        opened_at: "2024-03-15T12:05:00Z"
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-141"
+            summary: "Tote stuck picking_in_progress — operator cannot close tote at terminal"
+            root_cause: "IMS cycle count discrepancy at pick completion deliberately halted the tote pending count correction"
+            blocker_class: "ims_hold"
+            fix_summary: "Confirmed physical count, applied IMS count correction, cleared the count hold; tote closed within a minute"
+            similarity: 0.95
+
+  log_read:
+    - response:
+        entries: |
+          2024-03-15 13:02:11 WARN  IMS: cycle count discrepancy tote=T-88012 bin=B-3301 expected=12 counted=10
+          2024-03-15 13:02:11 INFO  IMS: count hold OPEN for tote T-88012 — fulfillment halted pending correction
+          2024-03-15 13:02:12 INFO  GTP: tote T-88012 close rejected — active IMS hold

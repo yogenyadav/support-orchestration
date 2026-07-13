@@ -1,0 +1,64 @@
+# Eval fixture — synthetic example (not a real incident).
+# TOTE-entity fixture AND the first human_relay-tier fixture: the client's DB and
+# logs are NOT reachable (no db_state_read / log_read mocks on purpose) — the
+# agent must lean on history matching and precise /ask questions relayed by the
+# engineer. This mirrors the real diagnostic posture for human_relay clients.
+
+fixture_id: "gtp_picking_tote_bin_unavailable_relay_01"
+grounding: "[SYNTHETIC — from maps/base/tote.yaml tote_open_to_picking + docs/2 human_relay tier]"
+
+# ── Input ────────────────────────────────────────────────────────────────────
+input:
+  jira_ticket_id: "WH-EXAMPLE-403"
+  client: "relay-client"
+  priority: "P3"
+  description: "Tote T-70455 opened at pick station 2 over 45 minutes ago but picking never started. Operator is at the station waiting. Order 33455 shows released."
+  entity_type: "tote"
+  entity_id: "T-70455"
+  entity_current_state: "open_for_picking"
+
+# ── Ground truth ──────────────────────────────────────────────────────────────
+ground_truth:
+  owning_domain: "GTP_PICKING"
+  stuck_transition: "open_for_picking → picking_in_progress"
+  root_cause: "The bin required for the pick never arrived at the pick port — ASRS accepted the retrieval request but the bin was reported damaged and pulled for inspection, so the retrieval silently stalled. The operator is waiting on a bin that will not arrive."
+  blocker_class: "bin_unavailable"
+  fix_applied: "Engineer confirmed via the client's ASRS console (relayed) that the bin was pulled for inspection. Inventory was reallocated to an alternate bin and a new retrieval was issued; picking started within 5 minutes."
+  fix_sql: null
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+scoring:
+  triage_correct_if:
+    owning_domain: "GTP_PICKING"
+  diagnosis_correct_if:
+    stuck_transition: "open_for_picking → picking_in_progress"
+    blocker_class: "bin_unavailable"
+  fix_match_if:
+    proposed_fix_must_mention: ["bin", "retrieval"]
+
+# ── Mocked tool responses ──────────────────────────────────────────────────────
+# human_relay tier: deliberately NO db_state_read or log_read mocks — those
+# tools are unavailable for this client. phoenix_resolve + history_search only.
+mocked_tool_responses:
+  phoenix_resolve:
+    response:
+      connectivity_tier: "human_relay"
+      log_posture: "human_relay"
+      db_host: null
+      log_host: null
+
+  history_search:
+    - response:
+        results:
+          - jira_id: "WH-PREV-118"
+            summary: "Tote open at pick station, operator waiting, picking never starts"
+            root_cause: "Required bin never arrived at pick port — ASRS retrieval stalled after bin pulled for damage inspection"
+            blocker_class: "bin_unavailable"
+            fix_summary: "Reallocated inventory to an alternate bin and reissued the retrieval; picking started within minutes"
+            similarity: 0.93
+          - jira_id: "WH-PREV-097"
+            summary: "Pick not starting — operator at station, tote open"
+            root_cause: "Bin retrieval request never sent because picking engine lost ASRS connectivity"
+            blocker_class: "storage_unavailable"
+            fix_summary: "Restarted the picking engine ASRS adapter; retrievals resumed"
+            similarity: 0.81

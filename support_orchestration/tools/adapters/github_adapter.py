@@ -93,7 +93,7 @@ class GithubApiAdapter(GithubAdapter):
 
         if encoding == "base64":
             return base64.b64decode(content_raw).decode("utf-8", errors="replace")
-        return content_raw
+        return str(content_raw)
 
 
 def build_from_env() -> GithubApiAdapter:

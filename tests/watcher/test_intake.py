@@ -7,8 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from support_orchestration.models import CaseStatus, Priority
-from support_orchestration.watcher.intake import case_from_jira, _parse_jira_datetime
-
+from support_orchestration.watcher.intake import _parse_jira_datetime, case_from_jira
 
 # ── _parse_jira_datetime ──────────────────────────────────────────────────────
 

@@ -16,7 +16,6 @@ from typing import Any
 
 from .mcp_server import LogAdapter
 
-
 RELAY_SENTINEL_KEY = "relay_required"
 
 

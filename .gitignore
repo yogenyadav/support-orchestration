@@ -23,3 +23,6 @@ htmlcov/
 # secrets — never commit
 .env.local
 secrets/
+
+# runtime service data (state + audit SQLite)
+data/

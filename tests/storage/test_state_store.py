@@ -10,7 +10,6 @@ import pytest
 from support_orchestration.models import Case, CaseStatus, ConnectivityTier, Priority
 from support_orchestration.storage.state_store import CaseStore
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 

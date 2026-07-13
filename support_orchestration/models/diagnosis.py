@@ -40,7 +40,7 @@ class DependencyFinding(BaseModel):
 class Diagnosis(BaseModel):
     """Output produced by a domain subagent at the end of its diagnosis loop."""
 
-    entity: dict[str, str]          # {"type": "order", "id": "12345", "current_state": "prioritized"}
+    entity: dict[str, str]          # {"type": "order", "id": "...", "current_state": "..."}
     stuck_transition: str           # "prioritized → released"
     owning_domain: str
     root_cause: str
